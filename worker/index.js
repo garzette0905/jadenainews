@@ -1,5 +1,6 @@
 import {canonical,rankArticles,validateResearch} from '../shared/news.mjs';
 import {handleAgent,agentStatus,enqueueCollection,collectionStatus} from './broker.mjs';
+import {member,manageUsers} from './users.mjs';
 const ASSETS = /* ASSETS */ {};
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 const empty=()=>({revision:0,articles:[],feedback:[],warnings:[],profile:'',collectedAt:null});
@@ -15,7 +16,9 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
   const user=request.headers.get('oai-authenticated-user-id')||(env.LOCAL_PREVIEW==='1'?'preview-owner':null);
   if(!user)return json({error:'ChatGPT로 사이트에 로그인해야 합니다.'},401);
   if(!env.BUCKET)return json({error:'사이트 저장소가 연결되지 않았습니다.'},503);
-  try{const key=await keyFor(user);
+  try{const actor=await member(env,request,user);const key=await keyFor(user);
+    if(request.method==='GET'&&path==='/api/me')return json({email:actor?.email||null,role:actor?.role||'viewer'});
+    if(request.method==='GET'&&path==='/api/users')return json(await manageUsers(env,actor));
     if(request.method==='GET'&&path==='/api/runtime')return json(await agentStatus(env));
     if(request.method==='GET'&&path.startsWith('/api/jobs/'))return json(await collectionStatus(env,key,path.slice(10)));
     if(request.method==='GET'&&['/api/state','/api/news'].includes(path)){const {state}=await read(env.BUCKET,key);return json(path==='/api/news'?{...state,ranked:rankArticles(state.articles,state.feedback),scoredAt:new Date().toISOString()}:state);}
@@ -23,6 +26,7 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
     if(request.headers.get('origin')!==url.origin)return json({error:'같은 사이트에서 요청해야 합니다.'},403);
     if(!request.headers.get('content-type')?.startsWith('application/json'))return json({error:'JSON 요청이 필요합니다.'},415);
     const data=await body(request),now=new Date().toISOString();
+    if(path==='/api/users')return json(await manageUsers(env,actor,data));
     if(path==='/api/collect')return json(await enqueueCollection(env,key,data),202);
     if(path==='/api/feedback'){const u=canonical(data.url),vote=data.vote;if(![-1,0,1].includes(vote))throw new Error('평가는 -1, 0, 1만 가능합니다.');return json(await change(env.BUCKET,key,s=>updateVote(s,{url:u,vote,title:String(data.title||'').slice(0,250),summary:String(data.summary||'').slice(0,1500),updatedAt:now})));}
     if(path==='/api/likes'){if(!Array.isArray(data.urls)||!data.urls.length||data.urls.length>10)throw new Error('한 번에 1~10개까지 등록할 수 있습니다.');const urls=[...new Set(data.urls.map(canonical))];return json(await change(env.BUCKET,key,s=>{let next=s;for(const u of urls){const a=s.articles.find(a=>a.url===u);next=updateVote(next,{url:u,vote:1,title:a?.title||'',summary:a?.summary||'',updatedAt:now,origin:'submit'});}return next;}));}
