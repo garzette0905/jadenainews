@@ -6,13 +6,13 @@ Sites 화면: https://jadenainews.garzette.chatgpt.site
 
 ## 테스트 시작
 
-Windows와 Node.js 24 이상이 필요합니다. 이 폴더에서 `npm run bridge`를 실행하거나 `start-news.ps1`을 실행합니다. 브라우저에서 `http://127.0.0.1:1455/`를 열고 **Sites 뉴스 화면 연결**을 누릅니다. Sites에 로그인하고 **Continue with ChatGPT**를 눌러 별도로 현재 요금제 사용 권한을 허용합니다. 계정이 반환한 모델을 선택하고 **데이터 수집하기** 또는 **새로고침**을 누릅니다.
+Windows, Node.js 24 이상과 공식 ChatGPT/Codex 앱의 실행 도구가 필요합니다. 앱에서 ChatGPT 계정으로 로그인합니다. 이 폴더에서 `npm run bridge`를 실행하거나 `start-news.ps1`을 실행합니다. Sites에 로그인한 뒤 화면에 **ChatGPT 앱 연결됨**이 표시되면 모델을 선택하고 **데이터 수집하기** 또는 **새로고침**을 누릅니다. 필요하면 **앱 계정 연결** 또는 **ChatGPT 앱 열기**를 누릅니다. PC 프로그램 연결은 허용된 Sites 출처에서 자동으로 처리하며 브라우저가 로컬 네트워크 접근을 요청하면 허용해야 합니다.
 
-API 키나 별도 API 과금 계정은 사용하지 않습니다. OAuth로 승인된 계정의 요금제 사용량으로 공식 Responses 엔드포인트를 호출합니다. 로그인과 요금제 권한은 별개입니다. 웹 검색은 선택한 모델과 계정 정책에 따라 제한될 수 있습니다. 실제 OAuth 승인과 웹 검색 성공은 사용자 계정에서 확인해야 합니다. 자동으로 기존 Codex 인증 파일을 읽거나 재사용하지 않습니다.
+API 키나 별도 API 과금 계정은 사용하지 않습니다. 공식 Codex App Server의 `account/read`로 ChatGPT 로그인 여부를 확인하고, 같은 실행 도구가 소유한 계정 세션으로 뉴스를 조사합니다. 프로그램이 인증 파일을 직접 읽거나 토큰을 추출·복사하지 않습니다. API 키 로그인은 거부합니다. 모델 목록은 App Server의 `model/list`에서 가져옵니다. 뉴스 조사에는 읽기 전용의 일회성 세션을 쓰며 셸·앱 커넥터·MCP·다른 에이전트·훅 기능을 제한합니다.
 
-OAuth 토큰은 `.runtime/oauth.dpapi`에 Windows CurrentUser DPAPI로 암호화하고 브라우저·Sites·소스 저장소로 보내지 않습니다. `.runtime/`은 Git과 배포에서 제외합니다. 로컬 프로그램은 루프백에서만 수신하며 정확한 Sites 출처와 실행별 연결 키를 확인합니다. 브라우저가 로컬 네트워크 접근 권한을 요청하면 허용해야 합니다. 연결 키는 화면 연결 URL의 fragment로만 전달하고 즉시 주소에서 지웁니다. OAuth 토큰과 다릅니다.
+계정 인증과 갱신은 공식 앱 실행 도구가 관리합니다. 이 뉴스 프로그램은 OAuth 토큰을 보관하지 않으며 Sites나 브라우저에 보내지 않습니다. `.runtime/`은 Git과 배포에서 제외합니다. 로컬 프로그램은 루프백에서만 수신하며 정확한 비공개 Sites 출처와 실행별 연결 키를 확인합니다. 자동 연결용 `/pair`도 정확히 허용된 출처에서만 응답합니다. 사이트의 공개 범위를 변경할 경우 로컬 접근 정책을 함께 재검토해야 합니다. 뉴스 화면의 **연결 해제**는 이 프로그램만 분리하며 원래 ChatGPT 앱을 로그아웃시키지 않습니다.
 
-현재 직접 등록 OAuth의 콜백은 `127.0.0.1`입니다. PC를 켜야 새로운 수집을 할 수 있습니다. 수집 후 기사·평가는 Sites R2에 사용자별로 저장되고 PC가 꺼져도 저장본은 볼 수 있습니다. 완전한 클라우드 실행은 별도 실행 호스트와 인증 세션 배치 또는 승인된 클라이언트 연결이 필요합니다.
+PC 프로그램이 켜져 있어야 새 수집을 할 수 있습니다. 수집 후 기사·평가는 Sites R2에 사용자별로 저장되고 PC가 꺼져도 저장본은 볼 수 있습니다. Sites에 접속하기 위한 로그인은 앱의 모델 실행 로그인과 별개입니다. 완전한 클라우드 실행은 별도 실행 호스트와 인증 연결이 필요합니다.
 
 ## 뉴스 판단
 
@@ -32,4 +32,4 @@ RSS·Bing 고정 검색·키워드 정규식을 제거했습니다. 기존 참�
 
 `npm run build`, `npm test`, `npm run validate`. `npm run preview`는 localhost:8788에서 메모리 저장소를 사용합니다. 미리보기는 운영 OAuth와 호스팅 저장소의 성공을 증명하지 않습니다. 가짜 기사는 배포하지 않습니다.
 
-공식 문서: https://developers.openai.com/siwc/token-sharing-open-source/sign-in · https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference · https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations
+공식 문서: https://learn.chatgpt.com/docs/app-server · https://learn.chatgpt.com/docs/auth
