@@ -2,7 +2,9 @@ import {spawn} from 'node:child_process';
 import {EventEmitter} from 'node:events';
 import {mkdir} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
-import {researchInstructions,researchInput,validateResearch,canonical} from '../shared/news.mjs';
+import {researchInstructions,researchInput,validateResearch,canonical,MAX_ARTICLES} from '../shared/news.mjs';
+import {discoverCandidates} from './discovery.mjs';
+import {referenceTargets} from './reference-targets.mjs';
 
 export class AppClient extends EventEmitter {
   constructor(){super();this.nextId=1;this.pending=new Map();this.process=null;this.ready=null;}
@@ -24,12 +26,39 @@ export class AppClient extends EventEmitter {
   async status(){await this.start();const {account}=await this.request('account/read',{refreshToken:false});if(!account)return {connected:false,mode:'app',email:'',models:[]};if(account.type!=='chatgpt')throw new Error('앱이 API 키 방식으로 로그인되어 있습니다. ChatGPT 계정 로그인으로 바꿔주세요.');
     const models=[];let cursor;do{const r=await this.request('model/list',{limit:50,includeHidden:false,...(cursor?{cursor}:{})});models.push(...r.data.map(m=>({slug:m.model,display_name:m.displayName,isDefault:m.isDefault})));cursor=r.nextCursor;}while(cursor);return {connected:true,mode:'app',email:account.email||'',planType:account.planType,models};}
   async research(input,progress=()=>{}){
+    progress('참고 매체의 최신 기사 후보를 수집하고 있습니다…');
+    const {candidates,coverage}=await discoverCandidates({now:Date.parse(input.now)});
+    const limit=Math.min(MAX_ARTICLES,Math.max(1,Number(input.maxArticles)||MAX_ARTICLES));
+    const targets=input.maxArticles?[]:referenceTargets(Date.parse(input.now));
+    const targetURLs=new Set(targets.map(t=>canonical(t.url)));
+    const selected=candidates.filter(a=>!targetURLs.has(a.url)).slice(0,limit),batches=[];
+    for(let i=0;i<targets.length;i+=10)batches.push({candidates:[],coverage:[],targets:targets.slice(i,i+10)});
+    for(let i=0;i<selected.length;i+=20)batches.push({candidates:selected.slice(i,i+20),coverage:[]});
+    // Sources without usable feeds receive their own investigation, rather than competing with feed articles for 30 slots.
+    const missing=coverage.filter(c=>c.status==='needs-search');
+    for(let i=0;i<missing.length;i+=4)batches.push({candidates:[],coverage:missing.slice(i,i+4)});
+    const articles=new Map(),consulted=new Set(),warnings=[],profiles=[];let searched=false;
+    if(candidates.length>limit)warnings.push(`후보 ${candidates.length}개 중 최신 ${limit}개를 원문 검토했습니다. 나머지 ${candidates.length-limit}개는 이번 조사에서 검토하지 못했습니다.`);
+    for(let i=0;i<batches.length;i++){
+      progress(`원문 검토 ${i+1}/${batches.length} · 후보 ${selected.length}개 · 검증 기사 ${articles.size}개`);
+      try{const result=await this.researchBatch({...input,...batches[i],maxArticles:Math.min(40,limit)},message=>progress(`${i+1}/${batches.length} · ${message}`));
+        searched ||= result.searchExecuted;for(const url of result.consulted)consulted.add(url);
+        for(const a of result.research.articles)articles.set(a.url,a);
+        for(const candidate of batches[i].candidates)if(!result.research.articles.some(a=>a.url===candidate.url))warnings.push(`${candidate.publisher}: ${candidate.title} — 이번 묶음에서 원문 검증·AI 적합성 확인을 통과하지 못했습니다.`);
+        warnings.push(...result.research.warnings);profiles.push(result.research.profile);
+        if(batches[i].coverage.length)for(const c of batches[i].coverage)c.status='searched';
+      }catch(e){warnings.push(`조사 묶음 ${i+1} 실패: ${e.message}`);for(const c of batches[i].coverage)c.status='failed';}
+    }
+    if(!articles.size)throw new Error('새 원문 검증에 성공한 기사가 없습니다. 이전 결과를 유지합니다.');
+    return {research:{articles:[...articles.values()].sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt)).slice(0,limit),warnings:warnings.slice(0,250),profile:[...new Set(profiles)].join('\n').slice(0,1500)},coverage,consulted:[...consulted],searchExecuted:searched,model:input.model,mode:'app'};
+  }
+  async researchBatch(input,progress=()=>{}){
     await this.start();const cwd=fileURLToPath(new URL('../.runtime/app-research/',import.meta.url));await mkdir(cwd,{recursive:true});
     // Disable configured MCP servers for this isolated research thread, without changing user settings.
     const config={web_search:'live'};const settings=await this.request('config/read',{includeLayers:false});for(const name of Object.keys(settings.config?.mcp_servers||{}))config[`mcp_servers.${name}.enabled`]=false;
     const {thread}=await this.request('thread/start',{model:input.model,cwd,ephemeral:true,sandbox:'read-only',approvalPolicy:'never',config,
       baseInstructions:'당신은 웹 검색만 수행하는 뉴스 조사 편집장입니다. 파일 읽기·수정, 명령 실행, MCP, 다른 에이전트 호출을 하지 않습니다.',
-      developerInstructions:researchInstructions()+` 이번 요청은 최대 ${Math.min(30,Math.max(1,Number(input.maxArticles)||30))}개 사건을 조사합니다.`+' 선택한 대표·관련 원문 URL은 반드시 실제 https URL로 openPage 웹 도구를 호출해서 확인하십시오. 검색 결과 ID 대신 실제 원문 URL로 여십시오. 전문 접근을 못 하면 공개 근거만 사용하고 warnings에 명시하십시오.'});
+      developerInstructions:researchInstructions()+` 이번 묶음은 최대 ${Math.min(40,Math.max(1,Number(input.maxArticles)||40))}개 기사를 조사합니다. candidates가 있으면 모든 후보를 확인하십시오. coverage에 지정된 출처가 있으면 각 출처에서 최근 기사를 조사하십시오. targets가 있으면 사용자가 제시한 각 기사 주제를 개별 검색하고 원문을 확인하십시오. 찾지 못한 주제는 warnings에 남기십시오. 참고 검색 주제는 검증된 사실이 아니므로 그대로 기사로 만들지 마십시오. 관련 없는 다른 매체를 무작정 조사하지 마십시오.`+' 선택한 대표·관련 원문 URL은 반드시 실제 https URL로 openPage 웹 도구를 호출해서 확인하십시오. 검색 결과 ID 대신 실제 원문 URL로 여십시오. 전문 접근을 못 하면 공개 근거만 사용하고 warnings에 명시하십시오.'});
     const items=new Map(),consulted=new Set();let search=false;
     let settle;const done=new Promise((resolve,reject)=>{settle={resolve,reject};});
     const onItem=p=>{if(p.threadId!==thread.id)return;const item=p.item;items.set(item.id,item);if(item.type==='webSearch'){search=true;progress('앱에서 웹 검색과 원문 확인을 진행하고 있습니다…');if(item.action?.url){try{consulted.add(canonical(item.action.url));}catch{}}}};
