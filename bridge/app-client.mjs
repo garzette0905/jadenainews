@@ -6,7 +6,7 @@ import {researchInstructions,researchInput,validateResearch,canonical,MAX_ARTICL
 import {discoverCandidates} from './discovery.mjs';
 import {referenceTargets} from './reference-targets.mjs';
 import {runBatches} from './batches.mjs';
-import {fetchEvidence} from './evidence.mjs';
+import {fetchEvidence,referenceCandidate} from './evidence.mjs';
 
 export class AppClient extends EventEmitter {
   constructor(){super();this.nextId=1;this.pending=new Map();this.process=null;this.ready=null;}
@@ -34,7 +34,7 @@ export class AppClient extends EventEmitter {
     const targets=input.maxArticles?[]:referenceTargets(Date.parse(input.now));
     const targetURLs=new Set(targets.map(t=>canonical(t.url)));
     const selected=candidates.filter(a=>!targetURLs.has(a.url)).slice(0,limit),batches=[];
-    const targetCandidates=targets.map(t=>({...candidates.find(a=>a.url===t.url),...t,title:t.query}));
+    const targetCandidates=targets.map(t=>referenceCandidate(t,candidates.find(a=>a.url===t.url)));
     const {evidence,warnings:evidenceWarnings}=await fetchEvidence([...targetCandidates,...selected],{now:Date.parse(input.now),progress});
     const enrich=rows=>rows.map(a=>evidence.get(a.url)||a);
     const verified=rows=>rows.filter(a=>evidence.has(a.url)).map(a=>a.url);
@@ -53,8 +53,8 @@ export class AppClient extends EventEmitter {
     if(aiBatches.length<batches.length)warnings.push(`원문 기반 기본 순위는 전체 기사에 적용했습니다. AI 의미 평가는 우선 ${aiBatches.length}개 묶음에 적용하며 나머지는 기본 평가로 표시합니다.`);
     await runBatches(aiBatches,async(batch,i,completed)=>{
       if(quotaError)return;
-      progress(`${completed()}/${batches.length} 완료 · 조사 ${i+1} · 검증 기사 ${articles.size}개`);
-      try{const result=await this.researchBatch({...input,...batch,maxArticles:Math.min(40,limit)},message=>progress(`${completed()}/${batches.length} 완료 · 조사 ${i+1} · 검증 ${articles.size}개 · ${message}`));
+      progress(`${completed()}/${aiBatches.length} 완료 · 조사 ${i+1} · 검증 기사 ${articles.size}개`);
+      try{const result=await this.researchBatch({...input,...batch,maxArticles:Math.min(40,limit)},message=>progress(`${completed()}/${aiBatches.length} 완료 · 조사 ${i+1} · 검증 ${articles.size}개 · ${message}`));
         searched ||= result.searchExecuted;sourceAccessed ||= result.sourceAccessExecuted;for(const url of result.consulted)consulted.add(url);
         for(const a of result.research.articles){const prior=articles.get(a.url);articles.set(a.url,{...a,reference:!!prior?.reference,assessment:'ai'});}
         for(const candidate of batch.candidates)if(!result.research.articles.some(a=>a.url===candidate.url))warnings.push(`${candidate.publisher}: ${candidate.title} — AI 평가를 완료하지 못해 확인된 기본 순위를 유지했습니다.`);
