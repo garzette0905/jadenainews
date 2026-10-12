@@ -6,6 +6,7 @@ import {researchInstructions,researchInput,validateResearch,canonical,MAX_ARTICL
 import {discoverCandidates} from './discovery.mjs';
 import {referenceTargets} from './reference-targets.mjs';
 import {runBatches} from './batches.mjs';
+import {fetchEvidence} from './evidence.mjs';
 
 export class AppClient extends EventEmitter {
   constructor(){super();this.nextId=1;this.pending=new Map();this.process=null;this.ready=null;}
@@ -33,18 +34,22 @@ export class AppClient extends EventEmitter {
     const targets=input.maxArticles?[]:referenceTargets(Date.parse(input.now));
     const targetURLs=new Set(targets.map(t=>canonical(t.url)));
     const selected=candidates.filter(a=>!targetURLs.has(a.url)).slice(0,limit),batches=[];
-    for(let i=0;i<targets.length;i+=10)batches.push({candidates:[],coverage:[],targets:targets.slice(i,i+10)});
-    for(let i=0;i<selected.length;i+=20)batches.push({candidates:selected.slice(i,i+20),coverage:[]});
+    const targetCandidates=targets.map(t=>({...candidates.find(a=>a.url===t.url),...t,title:t.query}));
+    const {evidence,warnings:evidenceWarnings}=await fetchEvidence([...targetCandidates,...selected],{now:Date.parse(input.now),progress});
+    const enrich=rows=>rows.map(a=>evidence.get(a.url)||a);
+    const verified=rows=>rows.filter(a=>evidence.has(a.url)).map(a=>a.url);
+    for(let i=0;i<targets.length;i+=10){const rows=targetCandidates.slice(i,i+10);batches.push({candidates:enrich(rows),coverage:[],targets:rows.filter(a=>!evidence.has(a.url)),verifiedUrls:verified(rows)});}
+    for(let i=0;i<selected.length;i+=20){const rows=selected.slice(i,i+20);batches.push({candidates:enrich(rows),coverage:[],verifiedUrls:verified(rows)});}
     // Sources without usable feeds receive their own investigation, rather than competing with feed articles for 30 slots.
     const missing=coverage.filter(c=>c.status==='needs-search');
     for(let i=0;i<missing.length;i+=4)batches.push({candidates:[],coverage:missing.slice(i,i+4)});
-    const articles=new Map(),consulted=new Set(),warnings=[],profiles=[];let searched=false;
+    const articles=new Map(),consulted=new Set(),warnings=[...evidenceWarnings],profiles=[];let searched=false,sourceAccessed=false;
     await mkdir(new URL('../.runtime/',import.meta.url),{recursive:true});let checkpoint=Promise.resolve();
     if(candidates.length>limit)warnings.push(`후보 ${candidates.length}개 중 최신 ${limit}개를 원문 검토했습니다. 나머지 ${candidates.length-limit}개는 이번 조사에서 검토하지 못했습니다.`);
     await runBatches(batches,async(batch,i,completed)=>{
       progress(`${completed()}/${batches.length} 완료 · 조사 ${i+1} · 검증 기사 ${articles.size}개`);
       try{const result=await this.researchBatch({...input,...batch,maxArticles:Math.min(40,limit)},message=>progress(`${completed()}/${batches.length} 완료 · 조사 ${i+1} · 검증 ${articles.size}개 · ${message}`));
-        searched ||= result.searchExecuted;for(const url of result.consulted)consulted.add(url);
+        searched ||= result.searchExecuted;sourceAccessed ||= result.sourceAccessExecuted;for(const url of result.consulted)consulted.add(url);
         for(const a of result.research.articles)articles.set(a.url,a);
         for(const candidate of batch.candidates)if(!result.research.articles.some(a=>a.url===candidate.url))warnings.push(`${candidate.publisher}: ${candidate.title} — 이번 묶음에서 원문 검증·AI 적합성 확인을 통과하지 못했습니다.`);
         warnings.push(...result.research.warnings);profiles.push(result.research.profile);
@@ -54,7 +59,7 @@ export class AppClient extends EventEmitter {
     },3);
     await checkpoint;
     if(!articles.size)throw new Error('새 원문 검증에 성공한 기사가 없습니다. 이전 결과를 유지합니다.');
-    return {research:{articles:[...articles.values()].sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt)).slice(0,limit),warnings:warnings.slice(0,250),profile:[...new Set(profiles)].join('\n').slice(0,1500)},coverage,consulted:[...consulted],searchExecuted:searched,model:input.model,mode:'app'};
+    return {research:{articles:[...articles.values()].sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt)).slice(0,limit),warnings:warnings.slice(0,250),profile:[...new Set(profiles)].join('\n').slice(0,1500)},coverage,consulted:[...consulted],searchExecuted:searched,sourceAccessExecuted:sourceAccessed,model:input.model,mode:'app'};
   }
   async researchBatch(input,progress=()=>{}){
     await this.start();const cwd=fileURLToPath(new URL('../.runtime/app-research/',import.meta.url));await mkdir(cwd,{recursive:true});
@@ -62,17 +67,17 @@ export class AppClient extends EventEmitter {
     const config={web_search:'live'};const settings=await this.request('config/read',{includeLayers:false});for(const name of Object.keys(settings.config?.mcp_servers||{}))config[`mcp_servers.${name}.enabled`]=false;
     const {thread}=await this.request('thread/start',{model:input.model,cwd,ephemeral:true,sandbox:'read-only',approvalPolicy:'never',config,
       baseInstructions:'당신은 웹 검색만 수행하는 뉴스 조사 편집장입니다. 파일 읽기·수정, 명령 실행, MCP, 다른 에이전트 호출을 하지 않습니다.',
-      developerInstructions:researchInstructions()+` 이번 묶음은 최대 ${Math.min(40,Math.max(1,Number(input.maxArticles)||40))}개 기사를 조사합니다. candidates가 있으면 모든 후보를 확인하십시오. coverage에 지정된 출처가 있으면 각 출처에서 최근 기사를 조사하십시오. targets가 있으면 사용자가 제시한 각 기사 주제를 개별 검색하고 원문을 확인하십시오. 찾지 못한 주제는 warnings에 남기십시오. 참고 검색 주제는 검증된 사실이 아니므로 그대로 기사로 만들지 마십시오. 관련 없는 다른 매체를 무작정 조사하지 마십시오.`+' 선택한 대표·관련 원문 URL은 반드시 실제 https URL로 openPage 웹 도구를 호출해서 확인하십시오. 검색 결과 ID 대신 실제 원문 URL로 여십시오. 전문 접근을 못 하면 공개 근거만 사용하고 warnings에 명시하십시오.'});
-    const items=new Map(),consulted=new Set();let search=false;
+      developerInstructions:researchInstructions()+` 이번 묶음은 최대 ${Math.min(40,Math.max(1,Number(input.maxArticles)||40))}개 기사를 조사합니다. candidates가 있으면 모든 후보를 확인하십시오. coverage에 지정된 출처가 있으면 각 출처에서 최근 기사를 조사하십시오. targets가 있으면 사용자가 제시한 각 기사 주제를 개별 검색하고 원문을 확인하십시오. 찾지 못한 주제는 warnings에 남기십시오. 참고 검색 주제는 검증된 사실이 아니므로 그대로 기사로 만들지 마십시오. 관련 없는 다른 매체를 무작정 조사하지 마십시오.`+' verifiedUrls의 원문은 PC가 실제 HTTP 접근과 발행일을 확인했으므로 제공한 content를 읽고 평가하십시오. 이 원문을 반복 검색·openPage 하지 마십시오. verifiedUrls에 없는 선택 원문·관련 URL은 실제 https URL로 openPage 웹 도구를 호출해서 확인하십시오. 검색 결과 ID 대신 실제 원문 URL로 여십시오. 전문 접근을 못 하면 공개 근거만 사용하고 warnings에 명시하십시오.'});
+    const items=new Map(),consulted=new Set(input.verifiedUrls||[]);let search=false;
     let settle;const done=new Promise((resolve,reject)=>{settle={resolve,reject};});
     const onItem=p=>{if(p.threadId!==thread.id)return;const item=p.item;items.set(item.id,item);if(item.type==='webSearch'){search=true;progress('앱에서 웹 검색과 원문 확인을 진행하고 있습니다…');if(item.action?.url){try{consulted.add(canonical(item.action.url));}catch{}}}};
     const onDone=p=>{if(p.threadId===thread.id)settle.resolve(p.turn);};
     const onDisconnect=e=>settle.reject(e);this.on('item/completed',onItem);this.on('turn/completed',onDone);this.on('disconnected',onDisconnect);
     let timer;try{const {turn}=await this.request('turn/start',{threadId:thread.id,input:[{type:'text',text:JSON.stringify(researchInput(input))}]});timer=setTimeout(()=>{this.request('turn/interrupt',{threadId:thread.id,turnId:turn.id}).catch(()=>{});settle.reject(new Error('뉴스 조사 시간이 초과되었습니다. 기존 결과를 유지합니다.'));},12*60000);
-      const final=await done;if(final.status!=='completed')throw new Error(final.error?.message||'앱의 뉴스 조사가 완료되지 않았습니다.');if(!search)throw new Error('실제 웹 검색이 수행되지 않았습니다.');
+      const final=await done;if(final.status!=='completed')throw new Error(final.error?.message||'앱의 뉴스 조사가 완료되지 않았습니다.');if(!search&&!input.verifiedUrls?.length)throw new Error('실제 웹 검색 또는 원문 확인이 수행되지 않았습니다.');
       const messages=[...items.values()].filter(i=>i.type==='agentMessage');const last=messages.filter(i=>i.phase==='final_answer').at(-1)||messages.at(-1);if(!last?.text)throw new Error('기사 결과가 없습니다.');let parsed;try{parsed=JSON.parse(last.text.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,''));}catch{throw new Error('AI 기사 결과 형식이 올바르지 않습니다.');}
       this.lastResearch={parsed,consulted:[...consulted],actions:[...items.values()].filter(i=>i.type==='webSearch').map(i=>i.action)};
-      progress('기사 근거와 배점을 확인하고 있습니다…');return {research:validateResearch(parsed,[...consulted],Date.parse(input.now)),consulted:[...consulted],searchExecuted:true,model:input.model,mode:'app'};
+      progress('기사 근거와 배점을 확인하고 있습니다…');return {research:validateResearch(parsed,[...consulted],Date.parse(input.now)),consulted:[...consulted],searchExecuted:search,sourceAccessExecuted:!!input.verifiedUrls?.length,model:input.model,mode:'app'};
     }finally{clearTimeout(timer);this.off('item/completed',onItem);this.off('turn/completed',onDone);this.off('disconnected',onDisconnect);this.request('thread/archive',{threadId:thread.id}).catch(()=>{});}
   }
   close(){this.process?.kill();this.process=null;this.ready=null;}
