@@ -1,10 +1,11 @@
 import {spawn} from 'node:child_process';
 import {EventEmitter} from 'node:events';
-import {mkdir} from 'node:fs/promises';
+import {mkdir,writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {researchInstructions,researchInput,validateResearch,canonical,MAX_ARTICLES} from '../shared/news.mjs';
 import {discoverCandidates} from './discovery.mjs';
 import {referenceTargets} from './reference-targets.mjs';
+import {runBatches} from './batches.mjs';
 
 export class AppClient extends EventEmitter {
   constructor(){super();this.nextId=1;this.pending=new Map();this.process=null;this.ready=null;}
@@ -38,17 +39,20 @@ export class AppClient extends EventEmitter {
     const missing=coverage.filter(c=>c.status==='needs-search');
     for(let i=0;i<missing.length;i+=4)batches.push({candidates:[],coverage:missing.slice(i,i+4)});
     const articles=new Map(),consulted=new Set(),warnings=[],profiles=[];let searched=false;
+    await mkdir(new URL('../.runtime/',import.meta.url),{recursive:true});let checkpoint=Promise.resolve();
     if(candidates.length>limit)warnings.push(`후보 ${candidates.length}개 중 최신 ${limit}개를 원문 검토했습니다. 나머지 ${candidates.length-limit}개는 이번 조사에서 검토하지 못했습니다.`);
-    for(let i=0;i<batches.length;i++){
-      progress(`원문 검토 ${i+1}/${batches.length} · 후보 ${selected.length}개 · 검증 기사 ${articles.size}개`);
-      try{const result=await this.researchBatch({...input,...batches[i],maxArticles:Math.min(40,limit)},message=>progress(`${i+1}/${batches.length} · ${message}`));
+    await runBatches(batches,async(batch,i,completed)=>{
+      progress(`${completed()}/${batches.length} 완료 · 조사 ${i+1} · 검증 기사 ${articles.size}개`);
+      try{const result=await this.researchBatch({...input,...batch,maxArticles:Math.min(40,limit)},message=>progress(`${completed()}/${batches.length} 완료 · 조사 ${i+1} · 검증 ${articles.size}개 · ${message}`));
         searched ||= result.searchExecuted;for(const url of result.consulted)consulted.add(url);
         for(const a of result.research.articles)articles.set(a.url,a);
-        for(const candidate of batches[i].candidates)if(!result.research.articles.some(a=>a.url===candidate.url))warnings.push(`${candidate.publisher}: ${candidate.title} — 이번 묶음에서 원문 검증·AI 적합성 확인을 통과하지 못했습니다.`);
+        for(const candidate of batch.candidates)if(!result.research.articles.some(a=>a.url===candidate.url))warnings.push(`${candidate.publisher}: ${candidate.title} — 이번 묶음에서 원문 검증·AI 적합성 확인을 통과하지 못했습니다.`);
         warnings.push(...result.research.warnings);profiles.push(result.research.profile);
-        if(batches[i].coverage.length)for(const c of batches[i].coverage)c.status='searched';
-      }catch(e){warnings.push(`조사 묶음 ${i+1} 실패: ${e.message}`);for(const c of batches[i].coverage)c.status='failed';}
-    }
+        if(batch.coverage.length)for(const c of batch.coverage)c.status='searched';
+      }catch(e){warnings.push(`조사 묶음 ${i+1} 실패: ${e.message}`);for(const c of batch.coverage)c.status='failed';}
+      checkpoint=checkpoint.then(()=>writeFile(new URL('../.runtime/collection-progress.json',import.meta.url),JSON.stringify({requestedAt:input.now,totalBatches:batches.length,coverage,articles:[...articles.values()],consulted:[...consulted],warnings},null,2))).catch(()=>{});
+    },3);
+    await checkpoint;
     if(!articles.size)throw new Error('새 원문 검증에 성공한 기사가 없습니다. 이전 결과를 유지합니다.');
     return {research:{articles:[...articles.values()].sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt)).slice(0,limit),warnings:warnings.slice(0,250),profile:[...new Set(profiles)].join('\n').slice(0,1500)},coverage,consulted:[...consulted],searchExecuted:searched,model:input.model,mode:'app'};
   }
