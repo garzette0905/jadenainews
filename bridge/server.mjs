@@ -2,9 +2,11 @@ import {createServer} from 'node:http';
 import {randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {AppClient} from './app-client.mjs';
+import {startCloudAgent} from './cloud-agent.mjs';
 const SITE='https://jadenainews.garzette.chatgpt.site',ORIGINS=new Set([SITE,'http://localhost:8788']);
 const pair=randomBytes(32).toString('base64url'),app=new AppClient();let attached=true,active=false;const jobs=new Map();
 const status=()=>attached?app.status():Promise.resolve({connected:false,mode:'app',email:'',models:[]});
+const cloudAgent=await startCloudAgent(app,{available:()=>attached&&!active});
 function json(res,data,status=200,origin){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...(origin?{'Access-Control-Allow-Origin':origin,Vary:'Origin'}:{})});res.end(JSON.stringify(data));}
 async function body(req){let text='';for await(const chunk of req){text+=chunk;if(text.length>250000)throw new Error('요청이 너무 큽니다.');}return JSON.parse(text||'{}');}
 const html=(res,text)=>{res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"});res.end(text);};
@@ -32,4 +34,4 @@ const server=createServer(async(req,res)=>{let origin=req.headers.origin;try{
 }catch(e){json(res,{error:e.message||'실행 프로그램 오류'},400,ORIGINS.has(origin)?origin:null);}});
 server.listen(1455,'127.0.0.1',()=>console.log('Jaden AI News 실행 프로그램: http://127.0.0.1:1455/'));
 server.on('error',e=>{console.error(e.code==='EADDRINUSE'?'1455 포트가 사용 중입니다. 기존 실행 프로그램을 종료한 뒤 다시 실행하세요.':'실행 프로그램을 시작하지 못했습니다.');process.exitCode=1;});
-for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{app.close();server.close(()=>process.exit(0));});
+for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>{cloudAgent.stop();app.close();server.close(()=>process.exit(0));});
