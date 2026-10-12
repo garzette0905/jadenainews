@@ -16,7 +16,14 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
   const user=request.headers.get('oai-authenticated-user-id')||(env.LOCAL_PREVIEW==='1'?'preview-owner':null);
   if(!user)return json({error:'ChatGPT로 사이트에 로그인해야 합니다.'},401);
   if(!env.BUCKET)return json({error:'사이트 저장소가 연결되지 않았습니다.'},503);
-  try{const actor=await member(env,request,user);const key=await keyFor(user);
+  if(!env.DB&&!['1','test-no-db'].includes(env.LOCAL_PREVIEW))return json({error:'사용자 DB가 연결되지 않았습니다.'},503);
+  try{const actor=await member(env,request,user);let key=await keyFor(user);
+    if(actor?.role==='viewer'){
+      if(request.method!=='GET')return json({error:'조회 전용 계정입니다. 기사 수집과 평가는 관리자만 가능합니다.'},403);
+      if(path.startsWith('/api/jobs/'))return json({error:'관리자만 수집 작업을 조회할 수 있습니다.'},403);
+      const owner=await env.DB.prepare("SELECT user_id FROM users WHERE role = 'owner'").first();
+      key=owner?.user_id?await keyFor(owner.user_id):'news/uninitialized-owner.json';
+    }
     if(request.method==='GET'&&path==='/api/me')return json({email:actor?.email||null,role:actor?.role||'viewer'});
     if(request.method==='GET'&&path==='/api/users')return json(await manageUsers(env,actor));
     if(request.method==='GET'&&path==='/api/runtime')return json(await agentStatus(env));

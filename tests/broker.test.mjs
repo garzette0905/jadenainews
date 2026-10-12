@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../worker/index.js';
 function bucket(){const entries=new Map();return {async get(k){const v=entries.get(k);return v?{etag:v.etag,json:async()=>JSON.parse(v.body)}:null;},async delete(k){entries.delete(k);},async put(k,body,{onlyIf}={}){const prior=entries.get(k);if(onlyIf?.etagMatches&&prior?.etag!==onlyIf.etagMatches)return null;if(onlyIf?.etagDoesNotMatch==='*'&&prior)return null;const v={etag:crypto.randomUUID(),body};entries.set(k,v);return v;}};}
-const env=()=>({BUCKET:bucket(),NEWS_AGENT_SECRET:'test-only-agent-secret'});
+const env=()=>({BUCKET:bucket(),NEWS_AGENT_SECRET:'test-only-agent-secret',LOCAL_PREVIEW:'test-no-db'});
 const user=(path,body,id='phone-owner')=>new Request('https://news.test'+path,{method:body?'POST':'GET',headers:{'oai-authenticated-user-id':id,...(body?{'Content-Type':'application/json',Origin:'https://news.test'}:{})},body:body?JSON.stringify(body):undefined});
 const agent=(path,body={},token='test-only-agent-secret')=>new Request('https://news.test/api/agent/'+path,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)});
 async function call(e,r){const response=await worker.fetch(r,e);return {status:response.status,data:await response.json()};}
