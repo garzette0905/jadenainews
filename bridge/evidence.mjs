@@ -9,7 +9,10 @@ export function pageEvidence(html,candidate,now=Date.now()){
  const at=Date.parse(raw);if(!Number.isFinite(at)||at>now+300000||now-at>WINDOWS[candidate.kind]*3600000)throw new Error('원문·피드의 발행일을 확인할 수 없거나 조회 기간 밖입니다.');
  const title=plain(meta(html,'og:title')||meta(html,'twitter:title')||(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||candidate.title||candidate.query).slice(0,500);
  const summary=plain(meta(html,'og:description')||meta(html,'description')||candidate.summary).slice(0,1200);
- const body=(html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i)||html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i)||[])[1]||html;
+ const cleaned=html.replace(/<(script|style|nav|header|footer)\b[\s\S]*?<\/\1>/gi,' ');
+ const schemaBody=(cleaned.match(/<([a-z][\w:-]*)\b[^>]*(?:itemprop=["']articleBody["']|id=["']article-view-content-div["'])[^>]*>([\s\S]*?)<\/\1>/i)||[])[2];
+ const articleBodies=[...cleaned.matchAll(/<article\b[^>]*>([\s\S]*?)<\/article>/gi)].map(m=>m[1]).sort((a,b)=>b.length-a.length);
+ const body=schemaBody||articleBodies[0]||(cleaned.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i)||[])[1]||cleaned;
  if(!title)throw new Error('원문 제목이 없습니다.');
  return {...candidate,url:canonical(candidate.url),title,publishedAt:new Date(at).toISOString(),summary,content:plain(body).slice(0,16000),dateEvidence:raw===candidate.publishedAt?'publisher-feed':'original-page',verification:'http-original'};
 }
