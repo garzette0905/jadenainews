@@ -51,6 +51,16 @@ export function rankArticles(articles,feedback=[],now=Date.now()) {
   return articles.filter(a=>votes.get(canonical(a.url))!==-1).map(a=>({...scoreArticle(a,now),vote:votes.get(canonical(a.url))||0}))
     .sort((a,b)=>b.score-a.score||Date.parse(b.publishedAt)-Date.parse(a.publishedAt)||a.url.localeCompare(b.url)).map((a,i)=>({...a,rank:i+1}));
 }
+// Read a collection snapshot; pending feedback only changes the selected vote buttons.
+export function savedRanking(state) {
+  const ranked=state.ranked||rankArticles(state.articles||[],state.appliedFeedback||[],Date.parse(state.scoredAt||state.collectedAt)||Date.now());
+  const votes=new Map((state.feedback||[]).map(f=>[canonical(f.url),f.vote]));
+  return ranked.map(a=>({...a,vote:votes.get(canonical(a.url))||0}));
+}
+export function collectionSnapshot(state,result,feedback,scoredAt) {
+  const merged=mergeResearch(state.articles,result,Date.parse(scoredAt));
+  return {...merged,appliedFeedback:feedback,scoredAt,ranked:rankArticles(merged.articles,feedback,Date.parse(scoredAt))};
+}
 export function mergeResearch(previous,result,now=Date.now()) {
   const fresh=new Map(result.articles.map(a=>[canonical(a.url),a]));
   let retained=0;

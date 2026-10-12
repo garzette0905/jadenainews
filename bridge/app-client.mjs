@@ -7,6 +7,7 @@ import {discoverCandidates} from './discovery.mjs';
 import {referenceTargets} from './reference-targets.mjs';
 import {runBatches} from './batches.mjs';
 import {fetchEvidence,referenceCandidate} from './evidence.mjs';
+import {compactFeedback,assessmentKey,readAssessments,writeAssessments,planAssessments} from './assessment-cache.mjs';
 
 export class AppClient extends EventEmitter {
   constructor(){super();this.nextId=1;this.pending=new Map();this.process=null;this.ready=null;}
@@ -33,37 +34,33 @@ export class AppClient extends EventEmitter {
     const limit=Math.min(MAX_ARTICLES,Math.max(1,Number(input.maxArticles)||MAX_ARTICLES));
     const targets=input.maxArticles?[]:referenceTargets(Date.parse(input.now));
     const targetURLs=new Set(targets.map(t=>canonical(t.url)));
-    const selected=candidates.filter(a=>!targetURLs.has(a.url)).slice(0,limit),batches=[];
+    const selected=candidates.filter(a=>!targetURLs.has(a.url)).slice(0,limit);
     const targetCandidates=targets.map(t=>referenceCandidate(t,candidates.find(a=>a.url===t.url)));
     const {evidence,warnings:evidenceWarnings}=await fetchEvidence([...targetCandidates,...selected],{now:Date.parse(input.now),progress});
     const enrich=rows=>rows.map(a=>evidence.get(a.url)||a);
-    const verified=rows=>rows.filter(a=>evidence.has(a.url)).map(a=>a.url);
-    for(let i=0;i<targets.length;i+=10){const rows=targetCandidates.slice(i,i+10);batches.push({candidates:enrich(rows),coverage:[],targets:rows.filter(a=>!evidence.has(a.url)),verifiedUrls:verified(rows)});}
-    for(let i=0;i<selected.length;i+=20){const rows=selected.slice(i,i+20);batches.push({candidates:enrich(rows),coverage:[],verifiedUrls:verified(rows)});}
-    // Sources without usable feeds receive their own investigation, rather than competing with feed articles for 30 slots.
-    const missing=coverage.filter(c=>c.status==='needs-search');
-    for(let i=0;i<missing.length;i+=4)batches.push({candidates:[],coverage:missing.slice(i,i+4)});
     const articles=new Map(),consulted=new Set(),warnings=[...evidenceWarnings],profiles=[];let searched=false,sourceAccessed=evidence.size>0,quotaError=null;
     for(const row of [...targetCandidates,...selected]){const source=evidence.get(row.url)|| (row.reference?row:null);if(!source)continue;const a=basicArticle(source,input.feedback,Date.parse(input.now));if(a){articles.set(a.url,a);consulted.add(a.url);}}
     await mkdir(new URL('../.runtime/',import.meta.url),{recursive:true});let checkpoint=Promise.resolve();
     if(candidates.length>limit)warnings.push(`후보 ${candidates.length}개 중 최신 ${limit}개를 원문 검토했습니다. 나머지 ${candidates.length-limit}개는 이번 조사에서 검토하지 못했습니다.`);
     // Every eligible original remains visible even when the selected AI cannot complete an assessment.
-    // Bound AI enrichment to reference articles and the newest candidate batch; collecting does not require 16 expensive model turns.
-    const aiBatches=input.model==='source-ranking'?[]:batches.slice(0,targets.length?4:1);
-    if(aiBatches.length<batches.length)warnings.push(`원문 기반 기본 순위는 전체 기사에 적용했습니다. AI 의미 평가는 우선 ${aiBatches.length}개 묶음에 적용하며 나머지는 기본 평가로 표시합니다.`);
+    // Reuse completed assessments; limit new AI work to forty newest pending candidates.
+    const cache=await readAssessments(),plan=planAssessments(enrich([...targetCandidates,...selected]).filter(a=>articles.has(a.url)),cache,input),aiBatches=plan.batches;
+    for(const a of plan.reused)articles.set(a.url,a);
+    warnings.push(`AI 평가 ${plan.reused.length}개 재사용 · 새 평가 최대 ${aiBatches.length}개 묶음(묶음당 20개). 나머지는 원문 기반 기본 순위를 유지합니다.`);
     await runBatches(aiBatches,async(batch,i,completed)=>{
       if(quotaError)return;
       progress(`${completed()}/${aiBatches.length} 완료 · 조사 ${i+1} · 검증 기사 ${articles.size}개`);
-      try{const result=await this.researchBatch({...input,...batch,maxArticles:Math.min(40,limit)},message=>progress(`${completed()}/${aiBatches.length} 완료 · 조사 ${i+1} · 검증 ${articles.size}개 · ${message}`));
+      try{const result=await this.researchBatch({...input,previous:[],feedback:compactFeedback(input.feedback||[],Date.parse(input.now)),...batch,maxArticles:Math.min(20,limit)},message=>progress(`${completed()}/${aiBatches.length} 완료 · 조사 ${i+1} · 검증 ${articles.size}개 · ${message}`));
         searched ||= result.searchExecuted;sourceAccessed ||= result.sourceAccessExecuted;for(const url of result.consulted)consulted.add(url);
-        for(const a of result.research.articles){const prior=articles.get(a.url);articles.set(a.url,{...a,reference:!!prior?.reference,assessment:'ai'});}
+        for(const a of result.research.articles){const prior=articles.get(a.url),article={...a,reference:!!prior?.reference,assessment:'ai'};articles.set(a.url,article);const row=batch.candidates.find(c=>c.url===a.url);if(row)cache[assessmentKey(row,input)]={at:Date.parse(input.now),article};}
         for(const candidate of batch.candidates)if(!result.research.articles.some(a=>a.url===candidate.url))warnings.push(`${candidate.publisher}: ${candidate.title} — AI 평가를 완료하지 못해 확인된 기본 순위를 유지했습니다.`);
         warnings.push(...result.research.warnings);profiles.push(result.research.profile);
         if(batch.coverage.length)for(const c of batch.coverage)c.status='searched';
       }catch(e){if(/usage limit|rate.?limit|사용량 한도/i.test(e.message))quotaError=e.message;warnings.push(`조사 묶음 ${i+1} 실패: ${e.message}`);for(const c of batch.coverage)c.status='failed';}
-      checkpoint=checkpoint.then(()=>writeFile(new URL('../.runtime/collection-progress.json',import.meta.url),JSON.stringify({requestedAt:input.now,totalBatches:batches.length,coverage,articles:[...articles.values()],consulted:[...consulted],warnings},null,2))).catch(()=>{});
-    },3);
+      checkpoint=checkpoint.then(()=>writeFile(new URL('../.runtime/collection-progress.json',import.meta.url),JSON.stringify({requestedAt:input.now,totalBatches:aiBatches.length,coverage,articles:[...articles.values()],consulted:[...consulted],warnings},null,2))).catch(()=>{});
+    },1);
     await checkpoint;
+    await writeAssessments(cache,Date.parse(input.now));
     if(!articles.size)throw new Error('새 원문 검증에 성공한 기사가 없습니다. 이전 결과를 유지합니다.');
     const all=[...articles.values()];const reserved=all.filter(a=>a.reference);const stored=[...reserved,...all.filter(a=>!a.reference).sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt))].slice(0,limit);
     const result={research:{articles:stored,warnings:warnings.slice(0,250),profile:[...new Set(profiles)].join('\n').slice(0,1500)||'원문과 발행일, 기사 성격, 기본 취향 유사도로 순위를 계산했습니다. 기본 평가·원문 미확인 표시는 AI 의미 평가가 완료되지 않은 기사입니다.'},coverage,consulted:[...consulted],searchExecuted:searched,sourceAccessExecuted:sourceAccessed,model:input.model,mode:'app'};

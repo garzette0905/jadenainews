@@ -24,7 +24,7 @@ test('viewers read owner news and cannot collect, vote, add likes or modify user
   try{
     const ownerResponse=await worker.fetch(request(owner,'/api/me'),env);assert.equal(ownerResponse.status,200,await ownerResponse.text());
     const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(owner))),b=>b.toString(16).padStart(2,'0')).toString();
-    objects.set('news/'+hash+'.json',{articles:[{title:'관리자 수집 결과'}],feedback:[],revision:2});
+    objects.set('news/'+hash+'.json',{articles:[{title:'관리자 수집 결과'}],ranked:[],feedback:[],revision:2});
     const result=await(await worker.fetch(request(viewer,'/api/state'),env)).json();assert.equal(result.articles[0].title,'관리자 수집 결과');
     for(const path of ['/api/collect','/api/feedback','/api/likes','/api/collection','/api/users'])assert.equal((await worker.fetch(request(viewer,path,{vote:1}),env)).status,403,path);
     assert.equal((await worker.fetch(request(viewer,'/api/jobs/anything'),env)).status,403);

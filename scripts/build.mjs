@@ -1,10 +1,10 @@
 import {readFile,mkdir,writeFile,copyFile} from 'node:fs/promises';
 const root=new URL('../',import.meta.url),read=p=>readFile(new URL(p,root),'utf8');
 const shared=await read('shared/news.mjs');
-const broker=(await read('worker/broker.mjs')).replace("import {validateResearch,mergeResearch} from '../shared/news.mjs';",'').replace(/^export /gm,'');
+const broker=(await read('worker/broker.mjs')).replace(/import \{[^}]+\} from '\.\.\/shared\/news\.mjs';/,'').replace(/^export /gm,'');
 const users=(await read('worker/users.mjs')).replace(/^export /gm,'');
 const assets={'/':['text/html; charset=utf-8',await read('web/index.html')],'/style.css':['text/css; charset=utf-8',(await read('web/base.css'))+'\n'+await read('web/extra.css')],'/app.js':['text/javascript; charset=utf-8',await read('web/app.js')],'/news.mjs':['text/javascript; charset=utf-8',shared]};
-const worker=(await read('worker/index.js')).replace("import {canonical,rankArticles,validateResearch,mergeResearch} from '../shared/news.mjs';",shared.replace(/^export /gm,''))
+const worker=(await read('worker/index.js')).replace(/import \{[^}]+\} from '\.\.\/shared\/news\.mjs';/,shared.replace(/^export /gm,''))
  .replace("import {handleAgent,agentStatus,enqueueCollection,collectionStatus} from './broker.mjs';",broker)
  .replace("import {member,manageUsers} from './users.mjs';",users)
  .replace('/* ASSETS */ {}',JSON.stringify(assets));
