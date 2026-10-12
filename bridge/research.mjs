@@ -1,0 +1,16 @@
+import {researchInstructions,researchInput,validateResearch,canonical} from '../shared/news.mjs';
+export async function parseEvents(body,onEvent){const reader=body.getReader(),decoder=new TextDecoder();let buf='';for(;;){const {done,value}=await reader.read();buf+=decoder.decode(value||new Uint8Array(),{stream:!done});buf=buf.replace(/\r\n/g,'\n');let end;while((end=buf.indexOf('\n\n'))>=0){const frame=buf.slice(0,end);buf=buf.slice(end+2);const data=frame.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');if(data&&data!=='[DONE]')onEvent(JSON.parse(data));}if(done){if(buf.trim())throw new Error('응답 스트림이 완전하게 종료되지 않았습니다.');break;}}}
+function failure(code){return ({subscription_sharing_usage_limit_exceeded:'현재 ChatGPT 요금제 사용량 한도에 도달했습니다.',subscription_sharing_usage_unavailable:'이 계정에서 앱의 요금제 사용이 허용되지 않았습니다.',insufficient_quota:'현재 계정의 사용량이 부족합니다.'})[code]||'ChatGPT 조사가 완료되지 않았습니다. 계정의 모델·검색 권한을 확인하세요.';}
+function sourcesOf(response){const urls=new Set();for(const item of response.output||[]){for(const s of item.action?.sources||[])if(s.url)urls.add(s.url);if(item.action?.url)urls.add(item.action.url);for(const c of item.content||[])for(const a of c.annotations||[])if(a.type==='url_citation'&&a.url)urls.add(a.url);}return [...urls].map(u=>{try{return canonical(u);}catch{return '';}}).filter(Boolean);}
+export async function research(accessToken,input,progress=()=>{}){
+  const r=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},body:JSON.stringify({model:input.model,store:false,stream:true,instructions:researchInstructions(),input:[{role:'user',content:JSON.stringify(researchInput(input))}],tools:[{type:'web_search'}],include:['web_search_call.action.sources']}),signal:AbortSignal.timeout(8*60000)});
+  if(!r.ok){let code;try{code=(await r.json()).error?.code;}catch{}throw new Error(failure(code));}
+  let final=null,text='',search=false;
+  await parseEvents(r.body,event=>{if(event.type==='response.output_text.delta')text+=event.delta||'';if(event.type?.includes('web_search_call')){search=true;progress('참고 매체를 검색하고 원문을 확인하고 있습니다…');}if(event.type==='response.output_item.done'&&event.item?.type==='web_search_call')search=true;
+    if(event.type==='response.completed')final=event.response;if(['response.failed','response.incomplete','error'].includes(event.type))throw new Error(failure(event.response?.error?.code||event.error?.code||event.code));});
+  if(!final||final.status!=='completed')throw new Error('완료되지 않은 조사입니다. 기존 기사를 유지합니다.');
+  search=search||(final.output||[]).some(i=>i.type==='web_search_call'&&i.status==='completed');if(!search)throw new Error('실제 웹 검색이 실행되지 않았습니다. 검색을 지원하는 모델을 선택하세요.');
+  const output=(final.output||[]).filter(i=>i.type==='message').flatMap(i=>i.content||[]).filter(c=>c.type==='output_text').map(c=>c.text).join('')||text;
+  let parsed;try{parsed=JSON.parse(output.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,''));}catch{throw new Error('조사 결과 JSON을 해석하지 못했습니다. 다시 수집하세요.');}
+  const consulted=sourcesOf(final);progress('기사 근거·발행일·배점을 검증하고 있습니다…');const result=validateResearch(parsed,consulted,Date.parse(input.now));return {research:result,consulted,searchExecuted:true,model:input.model};
+}

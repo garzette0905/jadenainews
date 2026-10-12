@@ -1,0 +1,6 @@
+import {createServer} from 'node:http';
+import {readFile} from 'node:fs/promises';
+const objects=new Map();
+const BUCKET={async get(k){const o=objects.get(k);return o?{etag:o.etag,json:async()=>JSON.parse(o.value)}:null;},async put(k,value,opts){const o=objects.get(k);if(opts?.onlyIf?.etagMatches&&o?.etag!==opts.onlyIf.etagMatches)return null;if(opts?.onlyIf?.etagDoesNotMatch==='*'&&o)return null;const result={etag:crypto.randomUUID(),value};objects.set(k,result);return result;}};
+const server=createServer(async(req,res)=>{try{const source=await readFile(new URL('../dist/server/index.js',import.meta.url),'utf8');const worker=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));const chunks=[];for await(const c of req)chunks.push(c);const response=await worker.default.fetch(new Request('http://localhost:8788'+req.url,{method:req.method,headers:req.headers,body:['GET','HEAD'].includes(req.method)?undefined:Buffer.concat(chunks)}),{BUCKET,LOCAL_PREVIEW:'1'});res.writeHead(response.status,Object.fromEntries(response.headers));res.end(Buffer.from(await response.arrayBuffer()));}catch(e){res.writeHead(500);res.end(e.message);}});
+server.listen(8788,'127.0.0.1',()=>console.log('Local: http://localhost:8788'));
