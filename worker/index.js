@@ -21,6 +21,8 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
     if(actor?.role==='viewer'){
       if(request.method!=='GET')return json({error:'조회 전용 계정입니다. 기사 수집과 평가는 관리자만 가능합니다.'},403);
       if(path.startsWith('/api/jobs/'))return json({error:'관리자만 수집 작업을 조회할 수 있습니다.'},403);
+    }
+    if(actor&&actor.role!=='owner'){
       const owner=await env.DB.prepare("SELECT user_id FROM users WHERE role = 'owner'").first();
       key=owner?.user_id?await keyFor(owner.user_id):'news/uninitialized-owner.json';
     }

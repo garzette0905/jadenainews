@@ -86,7 +86,7 @@
 .nw-hint { margin: 12px 0 24px; font-size: 14px; color: var(--nw-muted); }
 .nw-list { border-top: 1px solid var(--nw-hair-soft); }
 .nw-list > .nw-empty { padding: 32px 0; }
-.nw-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 24px; padding: 20px 0; border-bottom: 1px solid var(--nw-hair-soft); transition: opacity .3s; }
+.nw-row { display: flex; flex-direction: column; align-items: stretch; min-width: 0; padding: 24px; border-bottom: 1px solid var(--nw-hair-soft); transition: opacity .3s; }
 .nw-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 13px; color: var(--nw-muted); }
 .nw-row-meta strong { color: var(--nw-ink); font-weight: 600; margin-right: 2px; }
 .nw-row-meta time::before { margin-left: 2px; }
