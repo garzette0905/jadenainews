@@ -41,8 +41,9 @@ export function validateResearch(input,consulted=[],now=Date.now()) {
   if(!input||!Array.isArray(input.articles)||input.articles.length>40) throw new Error('기사 결과 형식이 올바르지 않습니다.');
   const grounded=new Set(consulted.map(s=>{try{return canonical(typeof s==='string'?s:s.url);}catch{return '';}}));
   if(!grounded.size) throw new Error('실제 검색 출처가 확인되지 않았습니다. 기존 결과를 유지합니다.');
-  const urls=new Set(),events=new Set();
-  const articles=input.articles.map(a=>{
+  const urls=new Set(),events=new Set(),groundingWarnings=[];
+  const verified=input.articles.filter(a=>{try{if(grounded.has(canonical(a.url)))return true;}catch{}groundingWarnings.push(`${String(a.titleKo||a.title||'기사').slice(0,100)}: 원문 URL을 검색 기록에서 확인할 수 없어 제외했습니다.`);return false;});
+  const articles=verified.map(a=>{
     const url=canonical(a.url); if(!grounded.has(url)) throw new Error('검색 근거에 없는 원문 URL이 포함되었습니다.');
     if(urls.has(url)||!a.eventId||events.has(a.eventId)) throw new Error('같은 기사 또는 사건이 중복되었습니다.');
     urls.add(url);events.add(a.eventId);
@@ -51,9 +52,9 @@ export function validateResearch(input,consulted=[],now=Date.now()) {
     for(const [k,max] of Object.entries({importance:30,preference:30,category:10,evidence:5,dislike:35}))
       if(typeof a.scores?.[k]!=='number'||!Number.isFinite(a.scores[k])||a.scores[k]<0||a.scores[k]>max) throw new Error('배점 범위를 벗어난 AI 결과입니다.');
     for(const k of ['title','titleKo','summary','publisher']) if(typeof a[k]!=='string'||!a[k].trim()||a[k].length>1500) throw new Error('기사 설명이 누락됐습니다.');
-    const related=(a.related||[]).slice(0,8).map(r=>{const u=canonical(r.url);if(!grounded.has(u))throw new Error('관련 기사 검색 근거가 없습니다.');return {url:u,title:String(r.title||'').slice(0,250),publisher:String(r.publisher||'').slice(0,80)};});
+    const related=(a.related||[]).slice(0,8).filter(r=>{try{if(grounded.has(canonical(r.url)))return true;}catch{}groundingWarnings.push(`${a.publisher}: 검색 기록에서 확인되지 않은 관련 보도를 제외했습니다.`);return false;}).map(r=>({url:canonical(r.url),title:String(r.title||'').slice(0,250),publisher:String(r.publisher||'').slice(0,80)}));
     return {eventId:String(a.eventId).slice(0,160),url,title:a.title,titleKo:a.titleKo,summary:a.summary,publisher:a.publisher,publishedAt:new Date(at).toISOString(),kind:a.kind,category:String(a.category||'other').slice(0,40),scores:a.scores,reasons:(a.reasons||[]).slice(0,5).map(String),related};
   });
   if(!articles.length) throw new Error('검증된 새 기사가 없습니다. 기존 결과를 유지합니다.');
-  return {articles,warnings:(input.warnings||[]).slice(0,30).map(x=>String(x).slice(0,500)),profile:String(input.profile||'').slice(0,1500)};
+  return {articles,warnings:[...(input.warnings||[]),...groundingWarnings].slice(0,30).map(x=>String(x).slice(0,500)),profile:String(input.profile||'').slice(0,1500)};
 }

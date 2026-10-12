@@ -38,6 +38,7 @@ export class AppClient extends EventEmitter {
     let timer;try{const {turn}=await this.request('turn/start',{threadId:thread.id,input:[{type:'text',text:JSON.stringify(researchInput(input))}]});timer=setTimeout(()=>{this.request('turn/interrupt',{threadId:thread.id,turnId:turn.id}).catch(()=>{});settle.reject(new Error('뉴스 조사 시간이 초과되었습니다. 기존 결과를 유지합니다.'));},12*60000);
       const final=await done;if(final.status!=='completed')throw new Error(final.error?.message||'앱의 뉴스 조사가 완료되지 않았습니다.');if(!search)throw new Error('실제 웹 검색이 수행되지 않았습니다.');
       const messages=[...items.values()].filter(i=>i.type==='agentMessage');const last=messages.filter(i=>i.phase==='final_answer').at(-1)||messages.at(-1);if(!last?.text)throw new Error('기사 결과가 없습니다.');let parsed;try{parsed=JSON.parse(last.text.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,''));}catch{throw new Error('AI 기사 결과 형식이 올바르지 않습니다.');}
+      this.lastResearch={parsed,consulted:[...consulted],actions:[...items.values()].filter(i=>i.type==='webSearch').map(i=>i.action)};
       progress('기사 근거와 배점을 확인하고 있습니다…');return {research:validateResearch(parsed,[...consulted],Date.parse(input.now)),consulted:[...consulted],searchExecuted:true,model:input.model,mode:'app'};
     }finally{clearTimeout(timer);this.off('item/completed',onItem);this.off('turn/completed',onDone);this.off('disconnected',onDisconnect);this.request('thread/archive',{threadId:thread.id}).catch(()=>{});}
   }
