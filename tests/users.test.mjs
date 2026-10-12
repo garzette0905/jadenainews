@@ -50,11 +50,11 @@ test('viewers read owner news and cannot collect, vote, add likes or modify user
 });
 
 
-test('designated admin upgrades an existing viewer and shares owner news, feedback and collection jobs',async()=>{
+test('persisted admin shares owner news, feedback and collection jobs',async()=>{
   const DB=localDB(),objects=new Map(),BUCKET={async get(k){const v=objects.get(k);return v?{etag:v.etag,json:async()=>JSON.parse(v.body)}:null;},async put(k,body){const v={etag:crypto.randomUUID(),body};objects.set(k,v);return v;},async delete(k){objects.delete(k);}},env={DB,BUCKET};
   try{
-    // Simulate the deployed pre-upgrade viewer record, preserving identity and history.
-    await DB.prepare("INSERT INTO users (email,user_id,role,status,created_at) VALUES (?,?,'viewer','active',?)").bind(admin,admin,new Date().toISOString()).run();
+    // Preserve the existing deployed administrator flag rather than promoting on every request.
+    await DB.prepare("INSERT INTO users (email,user_id,role,status,created_at,is_admin) VALUES (?,?,'viewer','active',?,1)").bind(admin,admin,new Date().toISOString()).run();
     await worker.fetch(request(owner,'/api/me'),env);
     const me=await(await worker.fetch(request(admin,'/api/me'),env)).json();assert.equal(me.role,'admin');
     assert.equal((await worker.fetch(request(admin,'/api/users'),env)).status,200);
@@ -72,5 +72,34 @@ test('designated admin upgrades an existing viewer and shares owner news, feedba
     assert.equal((await worker.fetch(request(admin,'/api/users',{action:'disable',email:admin}),env)).status,400);
     await worker.fetch(request(owner,'/api/users',{action:'disable',email:admin}),env);
     assert.equal((await worker.fetch(request(admin,'/api/me'),env)).status,403);
+  }finally{DB.close();}
+});
+
+
+test('owner can change roles in both directions; demoted accounts stay demoted across later logins',async()=>{
+  const DB=localDB(),env={DB,BUCKET:{}};
+  try{
+    await worker.fetch(request(owner,'/api/me'),env);
+    assert.equal((await(await worker.fetch(request(admin,'/api/me'),env)).json()).role,'admin');
+    assert.equal((await worker.fetch(request(owner,'/api/users',{action:'set-role',email:admin,role:'viewer'}),env)).status,200);
+    assert.equal((await(await worker.fetch(request(admin,'/api/me'),env)).json()).role,'viewer');
+    await worker.fetch(request(owner,'/api/me'),env);
+    assert.equal((await(await worker.fetch(request(admin,'/api/me'),env)).json()).role,'viewer');
+    assert.equal((await worker.fetch(request(admin,'/api/users'),env)).status,403);
+    assert.equal((await worker.fetch(request(admin,'/api/collect',{model:'test'}),env)).status,403);
+    assert.equal((await worker.fetch(request(admin,'/api/feedback',{url:'https://example.com/a',vote:1}),env)).status,403);
+    assert.equal((await worker.fetch(request(owner,'/api/users',{action:'set-role',email:admin,role:'admin'}),env)).status,200);
+    assert.equal((await(await worker.fetch(request(admin,'/api/me'),env)).json()).role,'admin');
+    assert.equal((await worker.fetch(request(admin,'/api/users'),env)).status,200);
+    await worker.fetch(request(owner,'/api/users',{action:'add',email:viewer}),env);
+    assert.equal((await worker.fetch(request(admin,'/api/users',{action:'set-role',email:viewer,role:'admin'}),env)).status,403);
+    assert.equal((await worker.fetch(request(viewer,'/api/users',{action:'set-role',email:viewer,role:'admin'}),env)).status,403);
+    assert.equal((await worker.fetch(request(owner,'/api/users',{action:'set-role',email:viewer,role:'owner'}),env)).status,400);
+    assert.equal((await worker.fetch(request(owner,'/api/users',{action:'set-role',email:owner,role:'viewer'}),env)).status,400);
+    assert.equal((await worker.fetch(request(owner,'/api/users',{action:'set-role',email:'missing@example.com',role:'admin'}),env)).status,404);
+    await worker.fetch(request(owner,'/api/users',{action:'disable',email:viewer}),env);
+    await worker.fetch(request(owner,'/api/users',{action:'set-role',email:viewer,role:'admin'}),env);
+    assert.equal((await worker.fetch(request(viewer,'/api/me'),env)).status,403);
+    const row=await DB.prepare('SELECT * FROM users WHERE email = ?').bind(admin).first();assert.equal(row.user_id,admin);assert.equal(row.is_admin,1);
   }finally{DB.close();}
 });
