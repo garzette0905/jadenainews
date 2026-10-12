@@ -14,7 +14,7 @@ export function pageEvidence(html,candidate,now=Date.now()){
  const articleBodies=[...cleaned.matchAll(/<article\b[^>]*>([\s\S]*?)<\/article>/gi)].map(m=>m[1]).sort((a,b)=>b.length-a.length);
  const body=schemaBody||articleBodies[0]||(cleaned.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i)||[])[1]||cleaned;
  if(!title)throw new Error('원문 제목이 없습니다.');
- return {...candidate,url:canonical(candidate.url),title,publishedAt:new Date(at).toISOString(),summary,content:plain(body).slice(0,16000),dateEvidence:raw===candidate.publishedAt?'publisher-feed':'original-page',verification:'http-original'};
+ return {...candidate,url:canonical(candidate.url),title,publishedAt:new Date(at).toISOString(),summary,content:plain(body).slice(0,6000),dateEvidence:raw===candidate.publishedAt?(candidate.reference?'reference-list':'publisher-feed'):'original-page',verification:'http-original'};
 }
 export async function fetchEvidence(candidates,{now=Date.now(),fetcher=fetch,progress=()=>{}}={}){
  const evidence=new Map(),warnings=[];let next=0,finished=0;

@@ -2,7 +2,7 @@ import {spawn} from 'node:child_process';
 import {EventEmitter} from 'node:events';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
-import {researchInstructions,researchInput,validateResearch,canonical,MAX_ARTICLES} from '../shared/news.mjs';
+import {researchInstructions,researchInput,validateResearch,canonical,MAX_ARTICLES,basicArticle} from '../shared/news.mjs';
 import {discoverCandidates} from './discovery.mjs';
 import {referenceTargets} from './reference-targets.mjs';
 import {runBatches} from './batches.mjs';
@@ -26,7 +26,7 @@ export class AppClient extends EventEmitter {
   request(method,params,timeout=30000){return new Promise((resolve,reject)=>{const id=this.nextId++;const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error('앱 응답을 기다리는 시간이 초과되었습니다.'));},timeout);this.pending.set(id,{resolve,reject,timer});this.send({id,method,params});});}
   fail(error){for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(error);}this.pending.clear();this.ready=null;this.emit('disconnected',error);}
   async status(){await this.start();const {account}=await this.request('account/read',{refreshToken:false});if(!account)return {connected:false,mode:'app',email:'',models:[]};if(account.type!=='chatgpt')throw new Error('앱이 API 키 방식으로 로그인되어 있습니다. ChatGPT 계정 로그인으로 바꿔주세요.');
-    const models=[];let cursor;do{const r=await this.request('model/list',{limit:50,includeHidden:false,...(cursor?{cursor}:{})});models.push(...r.data.map(m=>({slug:m.model,display_name:m.displayName,isDefault:m.isDefault})));cursor=r.nextCursor;}while(cursor);return {connected:true,mode:'app',email:account.email||'',planType:account.planType,models};}
+    const models=[];let cursor;do{const r=await this.request('model/list',{limit:50,includeHidden:false,...(cursor?{cursor}:{})});models.push(...r.data.map(m=>({slug:m.model,display_name:m.displayName,isDefault:m.isDefault})));cursor=r.nextCursor;}while(cursor);models.push({slug:'source-ranking',display_name:'원문 기반 빠른 수집 (AI 평가 대기)',isDefault:false});return {connected:true,mode:'app',email:account.email||'',planType:account.planType,models};}
   async research(input,progress=()=>{}){
     progress('참고 매체의 최신 기사 후보를 수집하고 있습니다…');
     const {candidates,coverage}=await discoverCandidates({now:Date.parse(input.now)});
@@ -43,23 +43,31 @@ export class AppClient extends EventEmitter {
     // Sources without usable feeds receive their own investigation, rather than competing with feed articles for 30 slots.
     const missing=coverage.filter(c=>c.status==='needs-search');
     for(let i=0;i<missing.length;i+=4)batches.push({candidates:[],coverage:missing.slice(i,i+4)});
-    const articles=new Map(),consulted=new Set(),warnings=[...evidenceWarnings],profiles=[];let searched=false,sourceAccessed=false;
+    const articles=new Map(),consulted=new Set(),warnings=[...evidenceWarnings],profiles=[];let searched=false,sourceAccessed=evidence.size>0,quotaError=null;
+    for(const row of [...targetCandidates,...selected]){const source=evidence.get(row.url)|| (row.reference?row:null);if(!source)continue;const a=basicArticle(source,input.feedback,Date.parse(input.now));if(a){articles.set(a.url,a);consulted.add(a.url);}}
     await mkdir(new URL('../.runtime/',import.meta.url),{recursive:true});let checkpoint=Promise.resolve();
     if(candidates.length>limit)warnings.push(`후보 ${candidates.length}개 중 최신 ${limit}개를 원문 검토했습니다. 나머지 ${candidates.length-limit}개는 이번 조사에서 검토하지 못했습니다.`);
-    await runBatches(batches,async(batch,i,completed)=>{
+    // Every eligible original remains visible even when the selected AI cannot complete an assessment.
+    // Bound AI enrichment to reference articles and the newest candidate batch; collecting does not require 16 expensive model turns.
+    const aiBatches=input.model==='source-ranking'?[]:batches.slice(0,targets.length?4:1);
+    if(aiBatches.length<batches.length)warnings.push(`원문 기반 기본 순위는 전체 기사에 적용했습니다. AI 의미 평가는 우선 ${aiBatches.length}개 묶음에 적용하며 나머지는 기본 평가로 표시합니다.`);
+    await runBatches(aiBatches,async(batch,i,completed)=>{
+      if(quotaError)return;
       progress(`${completed()}/${batches.length} 완료 · 조사 ${i+1} · 검증 기사 ${articles.size}개`);
       try{const result=await this.researchBatch({...input,...batch,maxArticles:Math.min(40,limit)},message=>progress(`${completed()}/${batches.length} 완료 · 조사 ${i+1} · 검증 ${articles.size}개 · ${message}`));
         searched ||= result.searchExecuted;sourceAccessed ||= result.sourceAccessExecuted;for(const url of result.consulted)consulted.add(url);
-        for(const a of result.research.articles)articles.set(a.url,a);
-        for(const candidate of batch.candidates)if(!result.research.articles.some(a=>a.url===candidate.url))warnings.push(`${candidate.publisher}: ${candidate.title} — 이번 묶음에서 원문 검증·AI 적합성 확인을 통과하지 못했습니다.`);
+        for(const a of result.research.articles){const prior=articles.get(a.url);articles.set(a.url,{...a,reference:!!prior?.reference,assessment:'ai'});}
+        for(const candidate of batch.candidates)if(!result.research.articles.some(a=>a.url===candidate.url))warnings.push(`${candidate.publisher}: ${candidate.title} — AI 평가를 완료하지 못해 확인된 기본 순위를 유지했습니다.`);
         warnings.push(...result.research.warnings);profiles.push(result.research.profile);
         if(batch.coverage.length)for(const c of batch.coverage)c.status='searched';
-      }catch(e){warnings.push(`조사 묶음 ${i+1} 실패: ${e.message}`);for(const c of batch.coverage)c.status='failed';}
+      }catch(e){if(/usage limit|rate.?limit|사용량 한도/i.test(e.message))quotaError=e.message;warnings.push(`조사 묶음 ${i+1} 실패: ${e.message}`);for(const c of batch.coverage)c.status='failed';}
       checkpoint=checkpoint.then(()=>writeFile(new URL('../.runtime/collection-progress.json',import.meta.url),JSON.stringify({requestedAt:input.now,totalBatches:batches.length,coverage,articles:[...articles.values()],consulted:[...consulted],warnings},null,2))).catch(()=>{});
     },3);
     await checkpoint;
     if(!articles.size)throw new Error('새 원문 검증에 성공한 기사가 없습니다. 이전 결과를 유지합니다.');
-    return {research:{articles:[...articles.values()].sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt)).slice(0,limit),warnings:warnings.slice(0,250),profile:[...new Set(profiles)].join('\n').slice(0,1500)},coverage,consulted:[...consulted],searchExecuted:searched,sourceAccessExecuted:sourceAccessed,model:input.model,mode:'app'};
+    const all=[...articles.values()];const reserved=all.filter(a=>a.reference);const stored=[...reserved,...all.filter(a=>!a.reference).sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt))].slice(0,limit);
+    const result={research:{articles:stored,warnings:warnings.slice(0,250),profile:[...new Set(profiles)].join('\n').slice(0,1500)||'원문과 발행일, 기사 성격, 기본 취향 유사도로 순위를 계산했습니다. 기본 평가·원문 미확인 표시는 AI 의미 평가가 완료되지 않은 기사입니다.'},coverage,consulted:[...consulted],searchExecuted:searched,sourceAccessExecuted:sourceAccessed,model:input.model,mode:'app'};
+    await writeFile(new URL('../.runtime/collection-result.json',import.meta.url),JSON.stringify(result,null,2));return result;
   }
   async researchBatch(input,progress=()=>{}){
     await this.start();const cwd=fileURLToPath(new URL('../.runtime/app-research/',import.meta.url));await mkdir(cwd,{recursive:true});

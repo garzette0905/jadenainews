@@ -66,5 +66,6 @@ const urls=[
 ];
 export function referenceTargets(now=Date.now()){
  const elapsed=(now-Date.parse('2026-10-12T13:03:52Z'))/3600000;
- return targets.map(([publisher,query,kind],i)=>({publisher,query,kind,url:urls[i],provenance:'owner-reference-2026-10-12'})).filter(({kind})=>elapsed>=-24&&elapsed<({news:72,official:168,report:504}[kind]));
+ const dates=['2026-10-12T12:49:18Z','2026-10-12T06:47:00Z','2026-10-12T09:00:00Z','2026-10-11T10:46:59Z','2026-10-07T18:45:28Z','2026-10-07T00:00:00Z','2026-10-11T00:25:29Z','2026-10-10T09:53:43Z','2026-10-12T11:33:35Z','2026-10-12T08:35:00Z','2026-10-12T06:00:35Z','2026-10-11T10:15:39Z','2026-10-09T19:25:00Z','2026-10-10T00:18:32Z','2026-10-10T09:02:26Z','2026-10-12T13:00:00Z','2026-10-08T09:04:16.632Z','2026-10-10T08:51:37Z','2026-10-09T00:00:00Z','2026-10-12T04:56:59Z','2026-10-12T06:11:51Z','2026-10-12T08:23:14Z','2026-10-11T14:00:00Z','2026-10-12T06:56:40Z','2026-10-08T06:00:00Z','2026-10-12T02:30:00Z','2026-10-12T08:54:39Z','2026-10-07T13:21:03Z','2026-10-07T12:00:00Z','2026-10-07T00:00:00Z'];
+ return targets.map(([publisher,query,kind],i)=>({publisher,query,title:query,kind,url:urls[i],publishedAt:dates[i],dateEvidence:'reference-list',reference:true,provenance:'owner-reference-2026-10-12'})).filter(()=>elapsed>=-24&&elapsed<21*24);
 }
