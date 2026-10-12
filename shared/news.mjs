@@ -57,6 +57,30 @@ export function savedRanking(state) {
   const votes=new Map((state.feedback||[]).map(f=>[canonical(f.url),f.vote]));
   return ranked.map(a=>({...a,vote:votes.get(canonical(a.url))||0}));
 }
+// Collapse only the events selected for Top 6. Keep the stored article scores and original pool intact.
+export function recommendationSections(ranked,limit=6) {
+  const linkKey=raw=>{try{const u=new URL(canonical(raw));u.hostname=u.hostname.replace(/^www\./,'');u.pathname=u.pathname.replace(/\/$/,'')||'/';return u.href;}catch{return null;}};
+  const rows=ranked.map(a=>({a,key:linkKey(a.url),links:new Set((a.related||[]).map(r=>linkKey(r.url)).filter(Boolean))}));
+  const parent=rows.map((_,i)=>i),root=i=>{while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;};
+  for(let i=0;i<rows.length;i++)for(let j=i+1;j<rows.length;j++){
+    const x=rows[i],y=rows[j];
+    if(Math.abs(Date.parse(x.a.publishedAt)-Date.parse(y.a.publishedAt))>72*3600000)continue;
+    const event=x.a.eventId&& !x.a.eventId.startsWith('url:')&&x.a.eventId===y.a.eventId;
+    const reciprocal=x.a.category===y.a.category&&x.links.has(y.key)&&y.links.has(x.key);
+    if(x.key===y.key||event||reciprocal)parent[root(j)]=root(i);
+  }
+  const groups=new Map();rows.forEach((row,i)=>{const k=root(i);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(row);});
+  // Input is the frozen score order: each group's first article is its highest-ranked representative.
+  const chosen=[...groups.values()].slice(0,limit),absorbed=new Set(),top=[];
+  for(const group of chosen){const representative=group[0].a,related=new Map();
+    const add=r=>{const key=linkKey(r.url);if(key&&key!==linkKey(representative.url)&&!related.has(key))related.set(key,{url:r.url,title:r.titleKo||r.title,publisher:r.publisher});};
+    for(const row of group){absorbed.add(row.key);if(row.a!==representative)add(row.a);}
+    for(const row of group)for(const r of row.a.related||[])add(r);
+    top.push({...representative,articleRank:representative.rank,rank:top.length+1,related:[...related.values()],mergedCount:group.length-1});
+  }
+  const more=rows.filter(row=>!absorbed.has(row.key)).map(({a},i)=>({...a,articleRank:a.rank,rank:top.length+i+1}));
+  return {top,more,articleCount:ranked.length,groupedCount:rows.length-top.length-more.length};
+}
 export function collectionSnapshot(state,result,feedback,scoredAt) {
   const merged=mergeResearch(state.articles,result,Date.parse(scoredAt));
   return {...merged,appliedFeedback:feedback,scoredAt,ranked:rankArticles(merged.articles,feedback,Date.parse(scoredAt))};

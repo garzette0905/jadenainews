@@ -1,4 +1,4 @@
-import {canonical,savedRanking,collectionSnapshot,validateResearch} from '../shared/news.mjs';
+import {canonical,savedRanking,recommendationSections,collectionSnapshot,validateResearch} from '../shared/news.mjs';
 import {handleAgent,agentStatus,enqueueCollection,collectionStatus} from './broker.mjs';
 import {member,manageUsers} from './users.mjs';
 const ASSETS = /* ASSETS */ {};
@@ -30,7 +30,7 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
     if(request.method==='GET'&&path==='/api/users')return json(await manageUsers(env,actor));
     if(request.method==='GET'&&path==='/api/runtime')return json(await agentStatus(env));
     if(request.method==='GET'&&path.startsWith('/api/jobs/'))return json(await collectionStatus(env,key,path.slice(10)));
-    if(request.method==='GET'&&['/api/state','/api/news'].includes(path)){const {state}=await read(env.BUCKET,key);return json({...state,ranked:savedRanking(state),scoredAt:state.scoredAt||state.collectedAt});}
+    if(request.method==='GET'&&['/api/state','/api/news'].includes(path)){const {state}=await read(env.BUCKET,key);const ranked=savedRanking(state);return json({...state,ranked,...(path==='/api/news'?{recommendations:recommendationSections(ranked)}:{}),scoredAt:state.scoredAt||state.collectedAt});}
     if(request.method!=='POST')return json({error:'허용되지 않은 요청입니다.'},405);
     if(request.headers.get('origin')!==url.origin)return json({error:'같은 사이트에서 요청해야 합니다.'},403);
     if(!request.headers.get('content-type')?.startsWith('application/json'))return json({error:'JSON 요청이 필요합니다.'},415);
