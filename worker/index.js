@@ -26,7 +26,7 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
       const owner=await env.DB.prepare("SELECT user_id FROM users WHERE role = 'owner'").first();
       key=owner?.user_id?await keyFor(owner.user_id):'news/uninitialized-owner.json';
     }
-    if(request.method==='GET'&&path==='/api/me')return json({email:actor?.email||null,role:actor?.role||'viewer'});
+    if(request.method==='GET'&&path==='/api/me')return json({email:actor?.email||null,name:actor?.name||actor?.email||'',role:actor?.role||'viewer'});
     if(request.method==='GET'&&path==='/api/users')return json(await manageUsers(env,actor));
     if(request.method==='GET'&&path==='/api/runtime')return json(await agentStatus(env));
     if(request.method==='GET'&&path.startsWith('/api/jobs/'))return json(await collectionStatus(env,key,path.slice(10)));

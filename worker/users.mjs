@@ -1,6 +1,13 @@
 const OWNER='garzette@paran.com';
 const ADMIN='garzette.kim@samsungsds.com',INITIAL=[OWNER,ADMIN];
 const fail=(message,status=403)=>{throw Object.assign(new Error(message),{status});};
+export function userDisplayName(request,storedName,email){
+  let name=request.headers.get('oai-authenticated-user-full-name')||'';
+  if(request.headers.get('oai-authenticated-user-full-name-encoding')==='percent-encoded-utf-8'){
+    try{name=decodeURIComponent(name);}catch{name='';}
+  }
+  return (name.trim()||String(storedName||'').trim()||email||'사용자').replace(/[\r\n\t]/g,' ').slice(0,100);
+}
 export async function member(env,request,user){
   if(!env.DB){if(env.LOCAL_PREVIEW==='1')return {email:OWNER,role:'owner',status:'active'};return null;}
   const email=(request.headers.get('oai-authenticated-user-email')||(env.LOCAL_PREVIEW==='1'?OWNER:'')).trim().toLowerCase();
@@ -15,7 +22,7 @@ export async function member(env,request,user){
   if(row.user_id&&row.user_id!==user)fail('계정 식별자가 일치하지 않습니다. 관리자에게 문의하세요.');
   // Reaching this route with trusted Sites identity proves platform access was granted.
   await env.DB.prepare("UPDATE users SET user_id = ?, status = 'active', last_seen_at = ? WHERE email = ? AND status != 'disabled'").bind(user,now,email).run();
-  return {...row,role:row.role==='owner'?'owner':row.is_admin===1?'admin':'viewer',user_id:user,status:'active',last_seen_at:now};
+  return {...row,name:userDisplayName(request,row.name,email),role:row.role==='owner'?'owner':row.is_admin===1?'admin':'viewer',user_id:user,status:'active',last_seen_at:now};
 }
 export async function manageUsers(env,actor,data){
   if(!actor||!['owner','admin'].includes(actor.role))fail('관리자만 사용자 정보를 관리할 수 있습니다.');

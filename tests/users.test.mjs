@@ -2,8 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {localDB} from '../scripts/local-db.mjs';
 import worker from '../worker/index.js';
+import {userDisplayName} from '../worker/users.mjs';
 const owner='garzette@paran.com',viewer='viewer@example.com',admin='garzette.kim@samsungsds.com';
 const request=(email,path='/api/users',data)=>new Request('https://news.test'+path,{method:data?'POST':'GET',headers:{'oai-authenticated-user-id':email,'oai-authenticated-user-email':email,Origin:'https://news.test','Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});
+
+test('profile names decode Korean UTF-8 and fall back safely to registered name or email',()=>{
+  const profile=new Request('https://news.test',{headers:{'oai-authenticated-user-full-name':encodeURIComponent('김제이든'),'oai-authenticated-user-full-name-encoding':'percent-encoded-utf-8'}});
+  assert.equal(userDisplayName(profile,'등록 이름',owner),'김제이든');
+  const missing=new Request('https://news.test');assert.equal(userDisplayName(missing,'등록 이름',owner),'등록 이름');assert.equal(userDisplayName(missing,'',owner),owner);
+  const malformed=new Request('https://news.test',{headers:{'oai-authenticated-user-full-name':'%E0%A4%A','oai-authenticated-user-full-name-encoding':'percent-encoded-utf-8'}});
+  assert.equal(userDisplayName(malformed,'등록 이름',owner),'등록 이름');
+});
+
+test('current-user API returns the signed-in display name without changing authorization',async()=>{
+  const DB=localDB(),env={DB,BUCKET:{}};
+  try{const original=request(owner,'/api/me'),headers=new Headers(original.headers);headers.set('oai-authenticated-user-full-name',encodeURIComponent('김제이든'));headers.set('oai-authenticated-user-full-name-encoding','percent-encoded-utf-8');
+    const r=await worker.fetch(new Request(original,{headers}),env);assert.equal(r.status,200);const me=await r.json();assert.equal(me.name,'김제이든');assert.equal(me.role,'owner');assert.equal(me.email,owner);
+    assert.equal((await(await worker.fetch(request(owner,'/api/me'),env)).json()).name,'Jaden Kim');
+  }finally{DB.close();}
+});
 test('DB user management authorizes owner, separates platform invitation and blocks disabled users',async()=>{
   const DB=localDB(),env={DB,BUCKET:{}};
   try{
