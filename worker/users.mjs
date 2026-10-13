@@ -34,7 +34,6 @@ export async function manageUsers(env,actor,data){
   if(data.action==='add'){
     await env.DB.prepare("INSERT INTO users (email,name,role,status,created_at) VALUES (?,?,'viewer','pending',?) ON CONFLICT(email) DO NOTHING").bind(email,String(data.name||'').trim().slice(0,100),new Date().toISOString()).run();
   }else if(data.action==='set-role'){
-    if(actor.role!=='owner')fail('사용자 권한은 소유자만 변경할 수 있습니다.');
     if(!['admin','viewer'].includes(data.role))fail('권한은 관리자 또는 조회 전용 사용자만 선택할 수 있습니다.',400);
     const target=await env.DB.prepare('SELECT email FROM users WHERE email = ?').bind(email).first();
     if(!target)fail('등록된 사용자를 찾을 수 없습니다.',404);

@@ -1,3 +1,4 @@
+import {editorialHeadline,headlineInstructions} from './headlines.mjs';
 export const SOURCES = [
   ['AI타임스','aitimes.com','news'],['인공지능신문','aitimes.kr','news'],['지디넷코리아','zdnet.co.kr','news'],
   ['TechCrunch','techcrunch.com','news'],['The Verge','theverge.com','news'],['MIT Technology Review','technologyreview.com','news'],
@@ -55,7 +56,7 @@ export function rankArticles(articles,feedback=[],now=Date.now()) {
 export function savedRanking(state) {
   const ranked=state.ranked||rankArticles(state.articles||[],state.appliedFeedback||[],Date.parse(state.scoredAt||state.collectedAt)||Date.now());
   const votes=new Map((state.feedback||[]).map(f=>[canonical(f.url),f.vote]));
-  return ranked.map(a=>({...a,vote:votes.get(canonical(a.url))||0}));
+  return ranked.map(a=>({...a,titleKo:editorialHeadline(a),vote:votes.get(canonical(a.url))||0}));
 }
 // Collapse only the events selected for Top 6. Keep the stored article scores and original pool intact.
 export function recommendationSections(ranked,limit=6) {
@@ -78,8 +79,9 @@ export function recommendationSections(ranked,limit=6) {
     for(const row of group)for(const r of row.a.related||[])add(r);
     top.push({...representative,articleRank:representative.rank,rank:top.length+1,related:[...related.values()],mergedCount:group.length-1});
   }
-  const more=rows.filter(row=>!absorbed.has(row.key)).map(({a},i)=>({...a,articleRank:a.rank,rank:top.length+i+1}));
-  return {top,more,articleCount:ranked.length,groupedCount:rows.length-top.length-more.length};
+  const remaining=rows.filter(row=>!absorbed.has(row.key));
+  const more=remaining.slice(0,Math.max(0,50-top.length)).map(({a},i)=>({...a,articleRank:a.rank,rank:top.length+i+1}));
+  return {top,more,articleCount:ranked.length,groupedCount:rows.length-top.length-remaining.length};
 }
 export function collectionSnapshot(state,result,feedback,scoredAt) {
   const merged=mergeResearch(state.articles,result,Date.parse(scoredAt));
@@ -92,7 +94,8 @@ export function mergeResearch(previous,result,now=Date.now()) {
   const all=[...fresh.values()];const reserved=all.filter(a=>a.reference);const others=all.filter(a=>!a.reference).sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt));
   return {...result,articles:[...reserved,...others].slice(0,MAX_ARTICLES),warnings:[...(result.warnings||[]),...(retained?[`이전 조사 기사 ${retained}개를 기간 내 보존했습니다. 이 기사의 취향 평가는 이전 조사 기준입니다.`]:[])]};
 }
-export function researchInstructions() {return `당신은 Jaden AI News의 개인 맞춤형 AI 산업 뉴스 조사 편집장입니다. PC가 직접 확인한 원문 입력을 읽고 분류·평가하십시오. 미확인 후보와 출처는 실제 웹 검색으로 보완하십시오. RSS·공식 목록에서 모은 후보를 먼저 확인하고 웹 검색으로 누락을 보완합니다. RSS는 발견 용도이며 내용 분류는 AI가 수행합니다. 사용자 취향과 오늘의 사건을 이해해 검색 질문을 스스로 만들고 조사합니다.
+export function researchInstructions() {return headlineInstructions()+`
+당신은 Jaden AI News의 개인 맞춤형 AI 산업 뉴스 조사 편집장입니다. PC가 직접 확인한 원문 입력을 읽고 분류·평가하십시오. 미확인 후보와 출처는 실제 웹 검색으로 보완하십시오. RSS·공식 목록에서 모은 후보를 먼저 확인하고 웹 검색으로 누락을 보완합니다. RSS는 발견 용도이며 내용 분류는 AI가 수행합니다. 사용자 취향과 오늘의 사건을 이해해 검색 질문을 스스로 만들고 조사합니다.
 출처: ${JSON.stringify(SOURCES)}. 이 매체와 기업의 공식 발표 및 분석 보고서를 우선 확인하되 좋아요에 새 매체가 있으면 해당 매체도 조사합니다. 어느 매체를 못 읽었으면 읽었다고 하지 않습니다. 유료 전문에 접근하지 못했으면 공개 근거만 사용합니다.
 수집 기준: 뉴스는 최근 72시간, 공식 발표는 7일, 리포트는 21일. 최신 뉴스에 높은 비중을 둡니다. 국가별 할당은 없습니다. AI가 주제가 아닌 기사, 일반 행사·인사·주가 시황·내용 없는 홍보는 의미를 이해해서 제외합니다. 프런티어 모델·제품 출시, 실질적인 무료 토큰·크레딧·개방, 컨설팅사 AI 분석, 핵심 인물의 구체적 발언과 안전 경고를 중시합니다. 공식 블로그 고객 도입 사례를 신제품으로 오인하지 않습니다. 모든 분류와 중요도, 취향 유사도, 같은 사건 판별은 당신이 내용으로 판단합니다.
 좋아요는 읽음이 아니라 취향입니다. 회사·발표자, 주제, 종류, 매체의 성격을 학습합니다. 기사 자신과 같은 사건에 대한 좋아요로 자기 점수를 부풀리지 않습니다. 평가의 효력은 14일 반감, 60일 후 0입니다. 싫어요 기사는 제외, 의미상 거의 같은 기사도 제외하고 비슷한 주제는 감점합니다. 싫어요 매체 전체를 수집 금지하지 않습니다. 취향 자료가 없으면 preference=15, dislike=0으로 중립 평가합니다.

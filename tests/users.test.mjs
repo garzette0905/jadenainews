@@ -92,8 +92,8 @@ test('owner can change roles in both directions; demoted accounts stay demoted a
     assert.equal((await(await worker.fetch(request(admin,'/api/me'),env)).json()).role,'admin');
     assert.equal((await worker.fetch(request(admin,'/api/users'),env)).status,200);
     await worker.fetch(request(owner,'/api/users',{action:'add',email:viewer}),env);
-    assert.equal((await worker.fetch(request(admin,'/api/users',{action:'set-role',email:viewer,role:'admin'}),env)).status,403);
-    assert.equal((await worker.fetch(request(viewer,'/api/users',{action:'set-role',email:viewer,role:'admin'}),env)).status,403);
+    assert.equal((await worker.fetch(request(admin,'/api/users',{action:'set-role',email:viewer,role:'admin'}),env)).status,200);
+    await worker.fetch(request(owner,'/api/users',{action:'set-role',email:viewer,role:'viewer'}),env);assert.equal((await worker.fetch(request(viewer,'/api/users',{action:'set-role',email:viewer,role:'admin'}),env)).status,403);
     assert.equal((await worker.fetch(request(owner,'/api/users',{action:'set-role',email:viewer,role:'owner'}),env)).status,400);
     assert.equal((await worker.fetch(request(owner,'/api/users',{action:'set-role',email:owner,role:'viewer'}),env)).status,400);
     assert.equal((await worker.fetch(request(owner,'/api/users',{action:'set-role',email:'missing@example.com',role:'admin'}),env)).status,404);
