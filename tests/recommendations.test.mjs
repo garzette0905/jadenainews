@@ -41,3 +41,9 @@ test('highly overlapping headlines collapse into one story and retain both sourc
   const result=recommendationSections([a,b,article(3,'different',{titleKo:'Meta AI 데이터센터 투자 분석'})]);
   assert.deepEqual(result.top.map(x=>x.articleRank),[1,3]);assert.equal(result.top[0].mergedCount,1);assert.equal(result.top[0].related[0].url,b.url);
 });
+test('a shared company and named product collapse a paraphrased release, not unrelated company coverage',()=>{
+  const museA=article(1,'meta-a',{titleKo:'Meta, 더 오래 기억하는 Muse Wonder 공개'}),museB=article(2,'meta-b',{titleKo:'Meta, 안전 우려 속 Muse 출시했다는 보도'});
+  const chip=article(3,'microsoft-chip',{titleKo:'Microsoft 자체 AI 칩 Maia 300 공개'}),policy=article(4,'microsoft-policy',{titleKo:'Microsoft, UK AI 출시 전 외부 안전 평가 제안'});
+  const r=recommendationSections([museA,museB,chip,policy]);
+  assert.deepEqual(r.top.map(a=>a.articleRank),[1,3,4]);assert.equal(r.top[0].mergedCount,1);
+});

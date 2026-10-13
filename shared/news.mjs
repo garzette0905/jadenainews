@@ -54,7 +54,11 @@ export function rankArticles(articles,feedback=[],now=Date.now()) {
 }
 // Read a collection snapshot; pending feedback only changes the selected vote buttons.
 export function savedRanking(state) {
-  const ranked=state.ranked||rankArticles(state.articles||[],state.appliedFeedback||[],Date.parse(state.scoredAt||state.collectedAt)||Date.now());
+  // Recalculate the deterministic formula from the collection snapshot so UI formula updates
+  // also apply to already-saved data, without calling AI or using pending votes.
+  const source=state.articles||[];
+  const complete=source.length&&source.every(a=>a?.url&&a?.publishedAt&&a?.kind&&a?.scores);
+  const ranked=complete?rankArticles(source,state.appliedFeedback||[],Date.parse(state.scoredAt||state.collectedAt)||Date.now()):state.ranked||[];
   const votes=new Map((state.feedback||[]).map(f=>[canonical(f.url),f.vote]));
   return ranked.map(a=>({...a,titleKo:editorialHeadline(a),displaySummary:editorialSummary(a),vote:votes.get(canonical(a.url))||0}));
 }
@@ -63,11 +67,14 @@ export function recommendationSections(ranked,limit=6) {
   const linkKey=raw=>{try{const u=new URL(canonical(raw));u.hostname=u.hostname.replace(/^www\./,'');u.pathname=u.pathname.replace(/\/$/,'')||'/';return u.href;}catch{return null;}};
   const rows=ranked.map(a=>({a,key:linkKey(a.url),links:new Set((a.related||[]).map(r=>linkKey(r.url)).filter(Boolean))}));
   const parent=rows.map((_,i)=>i),root=i=>{while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;};
-  const stop=new Set(['ai','artificial','intelligence','news','report','model','models','new','launch','launched','release','released','introducing','announces','announced','company','today','says','said','for','with','from','into','the','and','한','AI','인공지능','공개','출시','발표','추가','시작','위한','대한','관련','업계','소식','뉴스','모델','기업','서비스','기술','지원']);
+  const stop=new Set(['ai','artificial','intelligence','news','report','model','models','new','launch','launched','release','released','introducing','announces','announced','company','today','says','said','for','with','from','into','the','and','about','한','인공지능','공개','출시','발표','추가','시작','위한','대한','관련','업계','소식','뉴스','모델','기업','서비스','기술','지원','보도']);
   const titleTokens=s=>new Set((String(s||'').toLocaleLowerCase().match(/[\p{L}\p{N}]{2,}/gu)||[]).filter(t=>!stop.has(t)));
+  const companyTerms=new Set(['meta','microsoft','anthropic','openai','nvidia','google','amazon','aws','bain','mckinsey','deepmind','qualcomm','네이버','네이버클라우드','오픈ai','앤트로픽','엔비디아','마이크로소프트']);
   const similarTitle=(a,b)=>{
     const x=titleTokens(a.titleKo||a.title),y=titleTokens(b.titleKo||b.title),shared=[...x].filter(t=>y.has(t)).length;
-    return shared>=2&&shared/Math.max(1,Math.min(x.size,y.size))>=0.62;
+    const common=[...x].filter(t=>y.has(t));
+    const namedStory=common.some(t=>companyTerms.has(t))&&common.some(t=>!companyTerms.has(t));
+    return shared>=2&&(shared/Math.max(1,Math.min(x.size,y.size))>=0.62||(namedStory&&shared/Math.max(1,Math.min(x.size,y.size))>=0.28));
   };
   for(let i=0;i<rows.length;i++)for(let j=i+1;j<rows.length;j++){
     const x=rows[i],y=rows[j];

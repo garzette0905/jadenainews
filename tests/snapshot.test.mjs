@@ -16,7 +16,7 @@ test('pending votes, their removal, and elapsed time do not change the saved art
   assert.equal(savedRanking({...next,feedback:[]}).length,0);
 });
 test('legacy snapshots use the collection time and never apply newly pending dislikes',()=>{
-  const state={articles:[article],collectedAt:now,feedback:[{url:row.url,vote:-1}]};
+  const state={articles:[article],ranked:[{...article,freshness:40,score:90}],collectedAt:now,feedback:[{url:row.url,vote:-1}]};
   assert.equal(savedRanking(state).length,1);assert.equal(savedRanking(state)[0].freshness,30);
 });
 test('completed assessments are reused but changed originals, votes, models and day invalidate cache',()=>{
