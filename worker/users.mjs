@@ -1,6 +1,6 @@
-import {validLoginId,initializeLoginIds} from './auth.mjs';
+import {validLoginId,initializeLoginIds,validPassword,passwordRecord,setPassword} from './auth.mjs';
 const OWNER='garzette@paran.com';
-const ADMIN='garzette.kim@samsungsds.com',INITIAL=[OWNER,ADMIN];
+const INITIAL=[OWNER];
 const fail=(message,status=403)=>{throw Object.assign(new Error(message),{status});};
 export function userDisplayName(request,storedName,email){
   let name=request.headers.get('oai-authenticated-user-full-name')||'';
@@ -15,7 +15,7 @@ export async function member(env,request,user){
   if(!email)fail('로그인 이메일을 확인하지 못했습니다. 다시 로그인해 주세요.',401);
   const now=new Date().toISOString();
   // Defaults apply only to new bootstrap records; saved role changes are never reset.
-  await env.DB.batch(INITIAL.map(e=>env.DB.prepare('INSERT OR IGNORE INTO users (email,name,role,status,created_at,is_admin) VALUES (?,?,?,?,?,?)').bind(e,e===OWNER?'Jaden Kim':'',e===OWNER?'owner':'viewer','active',now,e===ADMIN?1:0)));
+  await env.DB.batch(INITIAL.map(e=>env.DB.prepare('INSERT OR IGNORE INTO users (email,name,role,status,created_at,is_admin) VALUES (?,?,?,?,?,?)').bind(e,e===OWNER?'Jaden Kim':'',e===OWNER?'owner':'viewer','active',now,0)));
   const row=await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(email).first();
   if(!row)fail('등록된 사용자가 아닙니다. 관리자에게 이메일 등록을 요청하세요.');
   if(row.status==='disabled')fail('사용이 중지된 계정입니다. 관리자에게 문의하세요.');
@@ -28,11 +28,21 @@ export async function manageUsers(env,actor,data){
   if(!actor||!['owner','admin'].includes(actor.role))fail('관리자만 사용자 정보를 관리할 수 있습니다.');
   if(!env.DB)fail('사용자 DB가 연결되지 않았습니다.',503);
   if(env.APP_LOGIN==='1')await initializeLoginIds(env);
-  if(!data)return {users:(await env.DB.prepare("SELECT email,name,login_id,CASE WHEN role = 'owner' THEN 'owner' WHEN is_admin = 1 THEN 'admin' ELSE 'viewer' END AS role,status,created_at,last_seen_at FROM users ORDER BY role,created_at,email").all()).results};
+  if(!data)return {users:(await env.DB.prepare("SELECT email,name,login_id,password_hash IS NOT NULL AS password_set,password_updated_at,CASE WHEN role = 'owner' THEN 'owner' WHEN is_admin = 1 THEN 'admin' ELSE 'viewer' END AS role,status,created_at,last_seen_at FROM users ORDER BY role,created_at,email").all()).results};
   const email=String(data.email||'').trim().toLowerCase();
   if(email.length>254||! /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail('올바른 이메일 주소를 입력하세요.',400);
-  if(email===OWNER&&data.action!=='set-login-id')fail('사이트 소유자는 변경할 수 없습니다.',400);
-  if(email===actor.email&&data.action==='disable')fail('본인 계정은 사용 중지할 수 없습니다.',400);
+  if(email===OWNER&&!['set-login-id','set-password'].includes(data.action))fail('사이트 소유자는 변경할 수 없습니다.',400);
+  if(email===actor.email&&['disable','delete'].includes(data.action))fail('본인 계정은 사용 중지하거나 삭제할 수 없습니다.',400);
+  if(data.action==='set-password'){
+    if(env.APP_LOGIN!=='1')fail('앱 로그인에서만 암호를 설정할 수 있습니다.',400);
+    if(email===OWNER&&actor.role!=='owner')fail('소유자의 암호는 소유자만 변경할 수 있습니다.');
+    const target=await env.DB.prepare('SELECT email FROM users WHERE email = ?').bind(email).first();if(!target)fail('등록된 사용자를 찾을 수 없습니다.',404);
+    await setPassword(env,email,data.password);return manageUsers(env,actor);
+  }
+  if(data.action==='delete'){
+    const target=await env.DB.prepare('SELECT email FROM users WHERE email = ?').bind(email).first();if(!target)fail('등록된 사용자를 찾을 수 없습니다.',404);
+    await env.DB.batch([env.DB.prepare('DELETE FROM app_sessions WHERE email = ?').bind(email),env.DB.prepare("DELETE FROM users WHERE email = ? AND role != 'owner'").bind(email)]);return manageUsers(env,actor);
+  }
   if(['add','set-login-id'].includes(data.action)&&env.APP_LOGIN==='1'){
     const id=String(data.loginId||'').trim().toLowerCase();
     if(!validLoginId(id))fail('아이디는 영문 소문자·숫자·점·밑줄·하이픈으로 3~64자 입력하세요.',400);
@@ -44,8 +54,13 @@ export async function manageUsers(env,actor,data){
     }
   }
   if(data.action==='add'){
-    await env.DB.prepare("INSERT INTO users (email,name,role,status,created_at) VALUES (?,?,'viewer','pending',?) ON CONFLICT(email) DO NOTHING").bind(email,String(data.name||'').trim().slice(0,100),new Date().toISOString()).run();
-    if(env.APP_LOGIN==='1')await env.DB.prepare('UPDATE users SET login_id = ? WHERE email = ? AND login_id IS NULL').bind(String(data.loginId).trim().toLowerCase(),email).run();
+    if(env.APP_LOGIN==='1'){
+      if(!validPassword(data.password))fail('초기 암호는 6~128자로 입력하세요.',400);
+      if(!['admin','viewer'].includes(data.role||'viewer'))fail('관리자 또는 사용자 권한을 선택하세요.',400);
+      if(await env.DB.prepare('SELECT email FROM users WHERE email = ?').bind(email).first())fail('이미 등록된 이메일입니다.',409);
+      const record=await passwordRecord(data.password),now=new Date().toISOString();
+      await env.DB.prepare("INSERT INTO users (email,name,login_id,role,status,created_at,is_admin,password_hash,password_salt,password_updated_at) VALUES (?,?,?,'viewer','pending',?,?,?,?,?)").bind(email,String(data.name||'').trim().slice(0,100),String(data.loginId).trim().toLowerCase(),now,data.role==='admin'?1:0,record.hash,record.salt,now).run();
+    }else await env.DB.prepare("INSERT INTO users (email,name,role,status,created_at) VALUES (?,?,'viewer','pending',?) ON CONFLICT(email) DO NOTHING").bind(email,String(data.name||'').trim().slice(0,100),new Date().toISOString()).run();
   }else if(data.action==='set-role'){
     if(!['admin','viewer'].includes(data.role))fail('권한은 관리자 또는 조회 전용 사용자만 선택할 수 있습니다.',400);
     const target=await env.DB.prepare('SELECT email FROM users WHERE email = ?').bind(email).first();

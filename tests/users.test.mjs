@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {localDB} from '../scripts/local-db.mjs';
 import worker from '../worker/index.js';
 import {userDisplayName} from '../worker/users.mjs';
-const owner='garzette@paran.com',viewer='viewer@example.com',admin='garzette.kim@samsungsds.com';
+const owner='garzette@paran.com',viewer='viewer@example.com',admin='admin@example.com';
 const request=(email,path='/api/users',data)=>new Request('https://news.test'+path,{method:data?'POST':'GET',headers:{'oai-authenticated-user-id':email,'oai-authenticated-user-email':email,Origin:'https://news.test','Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});
 
 test('profile names decode Korean UTF-8 and fall back safely to registered name or email',()=>{
@@ -79,6 +79,7 @@ test('persisted admin shares owner news, feedback and collection jobs',async()=>
 test('owner can change roles in both directions; demoted accounts stay demoted across later logins',async()=>{
   const DB=localDB(),env={DB,BUCKET:{}};
   try{
+    await DB.prepare("INSERT INTO users (email,user_id,role,status,created_at,is_admin) VALUES (?,?,'viewer','active',?,1)").bind(admin,admin,new Date().toISOString()).run();
     await worker.fetch(request(owner,'/api/me'),env);
     assert.equal((await(await worker.fetch(request(admin,'/api/me'),env)).json()).role,'admin');
     assert.equal((await worker.fetch(request(owner,'/api/users',{action:'set-role',email:admin,role:'viewer'}),env)).status,200);
