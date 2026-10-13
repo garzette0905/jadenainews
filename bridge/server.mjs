@@ -15,6 +15,7 @@ const page=(title,text)=>`<!doctype html><html lang="ko"><meta charset="utf-8"><
 const server=createServer(async(req,res)=>{let origin=req.headers.origin;try{
   if(req.headers.host!=='127.0.0.1:1455')return json(res,{error:'허용되지 않은 호스트입니다.'},403);
   const url=new URL(req.url,'http://127.0.0.1:1455');
+  if(url.pathname==='/health'&&req.method==='GET')return json(res,{service:'jaden-ai-news',configured:cloudAgent.configured,busy:active||cloudAgent.isBusy?.()||false,...cloudAgent.health?.()});
   if(url.pathname==='/'&&req.method==='GET'){return html(res,page('Jaden AI News 앱 연결','<p>PC 실행 프로그램이 켜져 있습니다. 현재 ChatGPT/Codex 앱에 로그인된 계정을 공식 App Server로 연결합니다. 별도의 요금제 OAuth 팝업은 필요하지 않습니다.</p><a href="'+SITE+'/#bridge='+pair+'">Sites 뉴스 화면 연결</a><p>Sites에 처음 로그인한 경우, 로그인 완료 후 이 페이지로 돌아와 위 연결 버튼을 다시 누르세요.</p><p>개발 미리보기: <a href="http://localhost:8788/#bridge='+pair+'">로컬 화면 연결</a></p>'));}
   if(!ORIGINS.has(origin))return json(res,{error:'허용된 뉴스 화면에서 요청하세요.'},403);
   if(req.method==='OPTIONS'){res.writeHead(204,{'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, X-Jaden-Pair','Access-Control-Allow-Private-Network':'true',Vary:'Origin'});res.end();return;}
