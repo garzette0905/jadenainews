@@ -2,6 +2,7 @@ import {canonical,savedRanking,recommendationSections,collectionSnapshot,validat
 import {handleAgent,agentStatus,enqueueCollection,collectionStatus} from './broker.mjs';
 import {member,manageUsers} from './users.mjs';
 import {sessionMember,login,logout} from './auth.mjs';
+import {connectGmail,gmailCallback,sendViewerEmail} from './gmail.mjs';
 const ASSETS = /* ASSETS */ {};
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 const empty=()=>({revision:0,articles:[],feedback:[],warnings:[],profile:'',collectedAt:null});
@@ -14,6 +15,7 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
   if(ASSETS[path]&&request.method==='GET'){const [type,content]=ASSETS[path];return new Response(content,{headers:{'Content-Type':type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'"}});}
   if(!path.startsWith('/api/'))return json({error:'경로를 찾을 수 없습니다.'},404);
   if(path.startsWith('/api/agent/'))return handleAgent(request,env);
+  if(path==='/api/google/callback'&&request.method==='GET')return gmailCallback(env,request,url);
   const user=request.headers.get('oai-authenticated-user-id')||(env.LOCAL_PREVIEW==='1'?'preview-owner':null);
   if(!user&&env.APP_LOGIN!=='1')return json({error:'ChatGPT로 사이트에 로그인해야 합니다.'},401);
   if(!env.BUCKET)return json({error:'사이트 저장소가 연결되지 않았습니다.'},503);
@@ -27,9 +29,10 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
       const response=json({ok:true});response.headers.set('Set-Cookie',cookie);return response;
     }
     const actor=env.APP_LOGIN==='1'?await sessionMember(env,request):await member(env,request,user);
+    if(request.method==='GET'&&path==='/api/google/connect')return connectGmail(env,actor,url);
     let key=await keyFor(actor?.user_id||user||actor.email);
     if(actor?.role==='viewer'){
-      if(request.method!=='GET')return json({error:'조회 전용 계정입니다. 기사 수집과 평가는 관리자만 가능합니다.'},403);
+      if(request.method!=='GET'&&path!=='/api/viewer-email')return json({error:'조회 전용 계정입니다. 기사 수집과 평가는 관리자만 가능합니다.'},403);
       if(path.startsWith('/api/jobs/'))return json({error:'관리자만 수집 작업을 조회할 수 있습니다.'},403);
     }
     if(actor&&actor.role!=='owner'){
@@ -45,6 +48,11 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
     if(request.headers.get('origin')!==url.origin)return json({error:'같은 사이트에서 요청해야 합니다.'},403);
     if(!request.headers.get('content-type')?.startsWith('application/json'))return json({error:'JSON 요청이 필요합니다.'},415);
     const data=await body(request),now=new Date().toISOString();
+    if(path==='/api/viewer-email'){
+      if(actor?.role!=='viewer')return json({error:'조회 전용 사용자만 알림을 보낼 수 있습니다.'},403);
+      const {state}=await read(env.BUCKET,key);
+      return json(await sendViewerEmail(env,state));
+    }
     if(path==='/api/users')return json(await manageUsers(env,actor,data));
     if(path==='/api/collect')return json(await enqueueCollection(env,key,data),202);
     if(path==='/api/feedback'){const u=canonical(data.url),vote=data.vote;if(![-1,0,1].includes(vote))throw new Error('평가는 -1, 0, 1만 가능합니다.');return json(await change(env.BUCKET,key,s=>updateVote(s,{url:u,vote,title:String(data.title||'').slice(0,250),summary:String(data.summary||'').slice(0,1500),updatedAt:now})));}
