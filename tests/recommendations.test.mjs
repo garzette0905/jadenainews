@@ -32,7 +32,12 @@ test('fewer than six distinct events yields only available representatives; pend
   assert.equal(a.top.length,1);assert.equal(a.more.length,0);assert.deepEqual(a.top.map(a=>a.url),b.top.map(a=>a.url));
   assert.deepEqual(recommendationSections([]),{top:[],more:[],articleCount:0,groupedCount:0});
 });
-test('unselected events remain individually available in more, preserving the requested Top 6 scope',()=>{
+test('similar reports are merged throughout the 50-story list, including below Top 6',()=>{
   const rows=Array.from({length:6},(_,i)=>article(i+1,'unique-'+i));rows.push(article(7,'another-release'),article(8,'another-release'));
-  assert.equal(recommendationSections(rows).more.length,2);
+  const result=recommendationSections(rows);assert.equal(result.more.length,1);assert.equal(result.more[0].mergedCount,1);assert.equal(result.more[0].related.length,1);
+});
+test('highly overlapping headlines collapse into one story and retain both sources',()=>{
+  const a=article(1,'url:a',{titleKo:'Meta Muse Wonder 출시, 개인 비서 AI 공개'}),b=article(2,'url:b',{titleKo:'Meta, Muse Wonder 개인 비서 AI 정식 출시',publisher:'다른 매체'});
+  const result=recommendationSections([a,b,article(3,'different',{titleKo:'Meta AI 데이터센터 투자 분석'})]);
+  assert.deepEqual(result.top.map(x=>x.articleRank),[1,3]);assert.equal(result.top[0].mergedCount,1);assert.equal(result.top[0].related[0].url,b.url);
 });

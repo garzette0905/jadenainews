@@ -61,7 +61,8 @@
   },
   "https://www.aitimes.com/news/articleView.html?idxno=216153": {
     "fingerprint": "c684b040",
-    "title": "미국, 영국의 AI 출시 전 안전 테스트 허용…기존 입장 번복"
+    "title": "미국, 영국의 AI 출시 전 안전 테스트 허용…기존 입장 번복",
+    "summary": "미국 정부가 OpenAI와 Anthropic 등 자국 기업에 영국 AI 안전연구소(UK AISI)와의 출시 전 모델 공유를 자제하도록 했던 입장을 바꿔, 영국의 사전 안전성 평가를 허용했습니다. 영국은 모델을 정식 공개하기 전에 위험을 시험하고, 그 평가 역량을 국제 기준과 정책 논의에 반영하려 합니다."
   },
   "https://techcrunch.com/2026/10/12/this-ai-startup-says-it-can-generate-permit-ready-blueprints-in-minutes/": {
     "fingerprint": "48504c56",

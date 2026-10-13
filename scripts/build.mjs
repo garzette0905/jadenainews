@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {readFile,mkdir,writeFile,copyFile} from 'node:fs/promises';
 const root=new URL('../',import.meta.url),read=p=>readFile(new URL(p,root),'utf8');
 const headlines=(await read('shared/headlines.mjs')).replace("import edits from './headline-edits.json' with {type:'json'};",'const edits='+await read('shared/headline-edits.json')+';');
-const shared=(await read('shared/news.mjs')).replace("import {editorialHeadline,headlineInstructions} from './headlines.mjs';",headlines);
+const shared=(await read('shared/news.mjs')).replace("import {editorialHeadline,editorialSummary,headlineInstructions} from './headlines.mjs';",headlines);
 const version=createHash('sha256').update(shared+await read('web/app.js')+await read('web/extra.css')+await read('web/base.css')+await read('web/index.html')).digest('hex').slice(0,12);
 const broker=(await read('worker/broker.mjs')).replace(/import \{[^}]+\} from '\.\.\/shared\/news\.mjs';/,'').replace(/^export /gm,'');
 const auth=(await read('worker/auth.mjs')).replace(/^export /gm,'');
