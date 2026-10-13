@@ -1,6 +1,7 @@
 import {canonical,savedRanking,recommendationSections,collectionSnapshot,validateResearch} from '../shared/news.mjs';
 import {handleAgent,agentStatus,enqueueCollection,collectionStatus} from './broker.mjs';
 import {member,manageUsers} from './users.mjs';
+import {sessionMember,login,logout} from './auth.mjs';
 const ASSETS = /* ASSETS */ {};
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 const empty=()=>({revision:0,articles:[],feedback:[],warnings:[],profile:'',collectedAt:null});
@@ -14,10 +15,19 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
   if(!path.startsWith('/api/'))return json({error:'경로를 찾을 수 없습니다.'},404);
   if(path.startsWith('/api/agent/'))return handleAgent(request,env);
   const user=request.headers.get('oai-authenticated-user-id')||(env.LOCAL_PREVIEW==='1'?'preview-owner':null);
-  if(!user)return json({error:'ChatGPT로 사이트에 로그인해야 합니다.'},401);
+  if(!user&&env.APP_LOGIN!=='1')return json({error:'ChatGPT로 사이트에 로그인해야 합니다.'},401);
   if(!env.BUCKET)return json({error:'사이트 저장소가 연결되지 않았습니다.'},503);
   if(!env.DB&&!['1','test-no-db'].includes(env.LOCAL_PREVIEW))return json({error:'사용자 DB가 연결되지 않았습니다.'},503);
-  try{const actor=await member(env,request,user);let key=await keyFor(user);
+  try{
+    if(env.APP_LOGIN==='1'&&['/api/login','/api/logout'].includes(path)){
+      if(request.method!=='POST')return json({error:'POST 요청이 필요합니다.'},405);
+      if(request.headers.get('origin')!==url.origin)return json({error:'같은 사이트에서 요청해야 합니다.'},403);
+      if(!request.headers.get('content-type')?.startsWith('application/json'))return json({error:'JSON 요청이 필요합니다.'},415);
+      const cookie=path==='/api/login'?await login(env,request,await body(request)):await logout(env,request);
+      const response=json({ok:true});response.headers.set('Set-Cookie',cookie);return response;
+    }
+    const actor=env.APP_LOGIN==='1'?await sessionMember(env,request):await member(env,request,user);
+    let key=await keyFor(actor?.user_id||user||actor.email);
     if(actor?.role==='viewer'){
       if(request.method!=='GET')return json({error:'조회 전용 계정입니다. 기사 수집과 평가는 관리자만 가능합니다.'},403);
       if(path.startsWith('/api/jobs/'))return json({error:'관리자만 수집 작업을 조회할 수 있습니다.'},403);
@@ -26,7 +36,7 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
       const owner=await env.DB.prepare("SELECT user_id FROM users WHERE role = 'owner'").first();
       key=owner?.user_id?await keyFor(owner.user_id):'news/uninitialized-owner.json';
     }
-    if(request.method==='GET'&&path==='/api/me')return json({email:actor?.email||null,name:actor?.name||actor?.email||'',role:actor?.role||'viewer'});
+    if(request.method==='GET'&&path==='/api/me')return json({email:actor?.email||null,name:actor?.name||actor?.email||'',loginId:actor?.login_id||null,role:actor?.role||'viewer'});
     if(request.method==='GET'&&path==='/api/users')return json(await manageUsers(env,actor));
     if(request.method==='GET'&&path==='/api/runtime')return json(await agentStatus(env));
     if(request.method==='GET'&&path.startsWith('/api/jobs/'))return json(await collectionStatus(env,key,path.slice(10)));
