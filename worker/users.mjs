@@ -28,11 +28,16 @@ export async function manageUsers(env,actor,data){
   if(!actor||!['owner','admin'].includes(actor.role))fail('관리자만 사용자 정보를 관리할 수 있습니다.');
   if(!env.DB)fail('사용자 DB가 연결되지 않았습니다.',503);
   if(env.APP_LOGIN==='1')await initializeLoginIds(env);
-  if(!data)return {users:(await env.DB.prepare("SELECT email,name,login_id,password_hash IS NOT NULL AS password_set,password_updated_at,CASE WHEN role = 'owner' THEN 'owner' WHEN is_admin = 1 THEN 'admin' ELSE 'viewer' END AS role,status,created_at,last_seen_at FROM users ORDER BY role,created_at,email").all()).results};
+  if(!data)return {users:(await env.DB.prepare("SELECT email,name,login_id,news_email_enabled,password_hash IS NOT NULL AS password_set,password_updated_at,CASE WHEN role = 'owner' THEN 'owner' WHEN is_admin = 1 THEN 'admin' ELSE 'viewer' END AS role,status,created_at,last_seen_at FROM users ORDER BY role,created_at,email").all()).results};
   const email=String(data.email||'').trim().toLowerCase();
   if(email.length>254||! /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail('올바른 이메일 주소를 입력하세요.',400);
-  if(email===OWNER&&!['set-login-id','set-password'].includes(data.action))fail('사이트 소유자는 변경할 수 없습니다.',400);
+  if(email===OWNER&&!['set-login-id','set-password','set-news-email'].includes(data.action))fail('사이트 소유자는 변경할 수 없습니다.',400);
   if(email===actor.email&&['disable','delete'].includes(data.action))fail('본인 계정은 사용 중지하거나 삭제할 수 없습니다.',400);
+  if(data.action==='set-news-email'){
+    if(typeof data.enabled!=='boolean')fail('메일 수신 여부는 체크 또는 해제로 지정하세요.',400);
+    const target=await env.DB.prepare('SELECT email FROM users WHERE email = ?').bind(email).first();if(!target)fail('등록된 사용자를 찾을 수 없습니다.',404);
+    await env.DB.prepare('UPDATE users SET news_email_enabled = ? WHERE email = ?').bind(data.enabled?1:0,email).run();return manageUsers(env,actor);
+  }
   if(data.action==='set-password'){
     if(env.APP_LOGIN!=='1')fail('앱 로그인에서만 암호를 설정할 수 있습니다.',400);
     if(email===OWNER&&actor.role!=='owner')fail('소유자의 암호는 소유자만 변경할 수 있습니다.');
@@ -54,13 +59,14 @@ export async function manageUsers(env,actor,data){
     }
   }
   if(data.action==='add'){
+    if(data.newsEmailEnabled!==undefined&&typeof data.newsEmailEnabled!=='boolean')fail('메일 수신 여부는 체크 또는 해제로 지정하세요.',400);
     if(env.APP_LOGIN==='1'){
       if(!validPassword(data.password))fail('초기 암호는 6~128자로 입력하세요.',400);
       if(!['admin','viewer'].includes(data.role||'viewer'))fail('관리자 또는 사용자 권한을 선택하세요.',400);
       if(await env.DB.prepare('SELECT email FROM users WHERE email = ?').bind(email).first())fail('이미 등록된 이메일입니다.',409);
       const record=await passwordRecord(data.password),now=new Date().toISOString();
-      await env.DB.prepare("INSERT INTO users (email,name,login_id,role,status,created_at,is_admin,password_hash,password_salt,password_updated_at) VALUES (?,?,?,'viewer','pending',?,?,?,?,?)").bind(email,String(data.name||'').trim().slice(0,100),String(data.loginId).trim().toLowerCase(),now,data.role==='admin'?1:0,record.hash,record.salt,now).run();
-    }else await env.DB.prepare("INSERT INTO users (email,name,role,status,created_at) VALUES (?,?,'viewer','pending',?) ON CONFLICT(email) DO NOTHING").bind(email,String(data.name||'').trim().slice(0,100),new Date().toISOString()).run();
+      await env.DB.prepare("INSERT INTO users (email,name,login_id,role,status,created_at,is_admin,password_hash,password_salt,password_updated_at,news_email_enabled) VALUES (?,?,?,'viewer','pending',?,?,?,?,?,?)").bind(email,String(data.name||'').trim().slice(0,100),String(data.loginId).trim().toLowerCase(),now,data.role==='admin'?1:0,record.hash,record.salt,now,data.newsEmailEnabled===true?1:0).run();
+    }else await env.DB.prepare("INSERT INTO users (email,name,role,status,created_at,news_email_enabled) VALUES (?,?,'viewer','pending',?,?) ON CONFLICT(email) DO NOTHING").bind(email,String(data.name||'').trim().slice(0,100),new Date().toISOString(),data.newsEmailEnabled===true?1:0).run();
   }else if(data.action==='set-role'){
     if(!['admin','viewer'].includes(data.role))fail('권한은 관리자 또는 조회 전용 사용자만 선택할 수 있습니다.',400);
     const target=await env.DB.prepare('SELECT email FROM users WHERE email = ?').bind(email).first();

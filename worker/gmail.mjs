@@ -3,14 +3,17 @@ import {savedRanking,recommendationSections} from '../shared/news.mjs';
 const TOKEN_KEY='private/gmail-refresh-token.json';
 const SCOPE='https://www.googleapis.com/auth/gmail.send';
 const SENDER='garzette@gmail.com';
-const RECIPIENT='garzette.kim@samsung.com';
+async function newsRecipients(env){
+  if(!env.DB)throw Object.assign(new Error('사용자 DB가 연결되지 않았습니다.'),{status:503});
+  return (await env.DB.prepare("SELECT email FROM users WHERE news_email_enabled = 1 AND status != 'disabled' ORDER BY email").all()).results.map(row=>row.email);
+}
 export async function gmailStatus(env){
   const missing=['GMAIL_CLIENT_ID','GMAIL_CLIENT_SECRET','GMAIL_TOKEN_KEY'].filter(key=>!env[key]);
   const configured=missing.length===0;
   let connected=false;
   if(configured){try{connected=!!(await loadToken(env))?.refresh_token;}catch{}}
   const last=await env.BUCKET.get('private/gmail-last-send.json');
-  return {configured,connected,missing,recipient:RECIPIENT,lastSentAt:last?(await last.json()).sentAt:null};
+  return {configured,connected,missing,recipientCount:env.DB?(await newsRecipients(env)).length:0,lastSentAt:last?(await last.json()).sentAt:null};
 }
 const html=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const utf8=s=>new TextEncoder().encode(s);
@@ -116,17 +119,23 @@ function mimeMessage({to,from,subject,html:bodyHtml,plain}){
 }
 export async function sendViewerEmail(env,state){
   if(!savedRanking(state).length)throw Object.assign(new Error('발송할 뉴스가 없습니다. 먼저 뉴스를 수집해 주세요.'),{status:409});
-  const token=await accessToken(env),message=emailMarkup(state),raw=b64url(utf8(mimeMessage({to:RECIPIENT,from:SENDER,...message})));
-  const response=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({raw})});
-  if(!response.ok){
-    const failure=await response.json().catch(()=>({}));
-    const reason=failure.error?.errors?.[0]?.reason;
-    const message=response.status===401?'Gmail 연결이 만료되었습니다. 소유자가 다시 연결해 주세요.':reason==='accessNotConfigured'?'Google Cloud에서 Gmail API를 사용 설정해 주세요.':response.status===403?'Gmail 발송 권한이 없거나 발송 한도에 도달했습니다. Google 설정을 확인해 주세요.':'Gmail이 메일 발송을 거부했습니다. 잠시 후 다시 시도해 주세요.';
-    throw Object.assign(new Error(message),{status:502});
+  const recipients=await newsRecipients(env);
+  if(!recipients.length)throw Object.assign(new Error('메일 수신이 체크된 사용자가 없습니다. 사용자 관리에서 수신 여부를 저장하세요.'),{status:409});
+  const token=await accessToken(env),message=emailMarkup(state),messageIds=[];
+  for(const recipient of recipients){
+    const raw=b64url(utf8(mimeMessage({to:recipient,from:SENDER,...message})));
+    const response=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({raw})});
+    if(!response.ok){
+      const failure=await response.json().catch(()=>({}));
+      const reason=failure.error?.errors?.[0]?.reason;
+      const message=response.status===401?'Gmail 연결이 만료되었습니다. 소유자가 다시 연결해 주세요.':reason==='accessNotConfigured'?'Google Cloud에서 Gmail API를 사용 설정해 주세요.':response.status===403?'Gmail 발송 권한이 없거나 발송 한도에 도달했습니다. Google 설정을 확인해 주세요.':'Gmail이 메일 발송을 거부했습니다. 잠시 후 다시 시도해 주세요.';
+      throw Object.assign(new Error(messageIds.length?`${messageIds.length}명 발송 완료 후 중단: ${message}`:message),{status:502});
+    }
+    const result=await response.json();
+    if(!result.id)throw Object.assign(new Error('Gmail 발송 확인을 받지 못했습니다.'),{status:502});
+    messageIds.push(result.id);
   }
-  const result=await response.json();
-  if(!result.id)throw Object.assign(new Error('Gmail 발송 확인을 받지 못했습니다.'),{status:502});
   const sentAt=new Date().toISOString();
-  await env.BUCKET.put('private/gmail-last-send.json',JSON.stringify({sentAt,messageId:result.id}),{httpMetadata:{contentType:'application/json'}});
-  return {ok:true,count:message.count,messageId:result.id,recipient:RECIPIENT,sentAt};
+  await env.BUCKET.put('private/gmail-last-send.json',JSON.stringify({sentAt,messageIds,recipientCount:recipients.length}),{httpMetadata:{contentType:'application/json'}});
+  return {ok:true,count:message.count,messageIds,recipientCount:recipients.length,sentAt};
 }

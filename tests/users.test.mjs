@@ -104,3 +104,25 @@ test('owner can change roles in both directions; demoted accounts stay demoted a
     const row=await DB.prepare('SELECT * FROM users WHERE email = ?').bind(admin).first();assert.equal(row.user_id,admin);assert.equal(row.is_admin,1);
   }finally{DB.close();}
 });
+
+test('news email preferences persist, default off, and require administrator access',async()=>{
+  const DB=localDB(),env={DB,BUCKET:{}};
+  try{
+    await worker.fetch(request(owner,'/api/me'),env);
+    await worker.fetch(request(owner,'/api/users',{action:'add',email:viewer}),env);
+    let list=await(await worker.fetch(request(owner),env)).json();
+    assert.equal(list.users.find(u=>u.email===viewer).news_email_enabled,0);
+    for(const email of [owner,viewer]){
+      assert.equal((await worker.fetch(request(owner,'/api/users',{action:'set-news-email',email,enabled:true}),env)).status,200);
+      await worker.fetch(request(email,'/api/me'),env);
+      list=await(await worker.fetch(request(owner),env)).json();assert.equal(list.users.find(u=>u.email===email).news_email_enabled,1);
+      assert.equal((await worker.fetch(request(owner,'/api/users',{action:'set-news-email',email,enabled:false}),env)).status,200);
+      list=await(await worker.fetch(request(owner),env)).json();assert.equal(list.users.find(u=>u.email===email).news_email_enabled,0);
+    }
+    assert.equal((await worker.fetch(request(viewer,'/api/users',{action:'set-news-email',email:viewer,enabled:true}),env)).status,403);
+    assert.equal((await worker.fetch(request(owner,'/api/users',{action:'set-news-email',email:viewer,enabled:'false'}),env)).status,400);
+    assert.equal((await worker.fetch(request(owner,'/api/users',{action:'set-news-email',email:'missing@example.com',enabled:true}),env)).status,404);
+    assert.equal((await worker.fetch(request(owner,'/api/users',{action:'add',email:'checked@example.com',newsEmailEnabled:true}),env)).status,200);
+    list=await(await worker.fetch(request(owner),env)).json();assert.equal(list.users.find(u=>u.email==='checked@example.com').news_email_enabled,1);
+  }finally{DB.close();}
+});

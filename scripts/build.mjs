@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {readFile,mkdir,writeFile,copyFile} from 'node:fs/promises';
+import {readFile,mkdir,writeFile,copyFile,cp} from 'node:fs/promises';
 const root=new URL('../',import.meta.url),read=p=>readFile(new URL(p,root),'utf8');
 const headlines=(await read('shared/headlines.mjs')).replace("import edits from './headline-edits.json' with {type:'json'};",'const edits='+await read('shared/headline-edits.json')+';');
 const shared=(await read('shared/news.mjs')).replace("import {editorialHeadline,editorialSummary,headlineInstructions} from './headlines.mjs';",headlines);
@@ -17,4 +17,5 @@ const worker=(await read('worker/index.js')).replace(/import \{[^}]+\} from '\.\
  .replace('/* ASSETS */ {}',JSON.stringify(assets));
 await mkdir(new URL('dist/server/',root),{recursive:true});await mkdir(new URL('dist/.openai/',root),{recursive:true});
 await writeFile(new URL('dist/server/index.js',root),worker);await copyFile(new URL('.openai/hosting.json',root),new URL('dist/.openai/hosting.json',root));
+await cp(new URL('drizzle/',root),new URL('dist/drizzle/',root),{recursive:true});
 console.log('Built Jaden AI News Worker with embedded UI assets.');
