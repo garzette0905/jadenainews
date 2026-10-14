@@ -65,6 +65,8 @@ export async function connectGmail(env,actor,url){
   return Response.redirect(auth.toString(),302);
 }
 export async function gmailCallback(env,request,url){
+  const missing=['GMAIL_CLIENT_ID','GMAIL_CLIENT_SECRET','GMAIL_TOKEN_KEY'].filter(key=>!env[key]);
+  if(missing.length)return htmlResponse('Sites 실행 환경에서 읽지 못하는 설정: '+missing.join(', '),503);
   const query=url.searchParams;
   if(query.has('error'))return htmlResponse('Google 메일 연결이 취소되었습니다.',400);
   const state=query.get('state'),code=query.get('code');
