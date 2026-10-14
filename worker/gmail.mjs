@@ -5,11 +5,12 @@ const SCOPE='https://www.googleapis.com/auth/gmail.send';
 const SENDER='garzette@gmail.com';
 const RECIPIENT='garzette.kim@samsung.com';
 export async function gmailStatus(env){
-  const configured=!!(env.GMAIL_CLIENT_ID&&env.GMAIL_CLIENT_SECRET&&env.GMAIL_TOKEN_KEY);
+  const missing=['GMAIL_CLIENT_ID','GMAIL_CLIENT_SECRET','GMAIL_TOKEN_KEY'].filter(key=>!env[key]);
+  const configured=missing.length===0;
   let connected=false;
   if(configured){try{connected=!!(await loadToken(env))?.refresh_token;}catch{}}
   const last=await env.BUCKET.get('private/gmail-last-send.json');
-  return {configured,connected,recipient:RECIPIENT,lastSentAt:last?(await last.json()).sentAt:null};
+  return {configured,connected,missing,recipient:RECIPIENT,lastSentAt:last?(await last.json()).sentAt:null};
 }
 const html=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const utf8=s=>new TextEncoder().encode(s);
@@ -52,7 +53,8 @@ function htmlResponse(message,status=200){
 }
 export async function connectGmail(env,actor,url){
   if(actor?.role!=='owner')return new Response('소유자만 메일을 연결할 수 있습니다.',{status:403});
-  if(!env.GMAIL_CLIENT_ID||!env.GMAIL_CLIENT_SECRET||!env.GMAIL_TOKEN_KEY)return new Response('메일 발송 설정이 완료되지 않았습니다.',{status:503});
+  const missing=['GMAIL_CLIENT_ID','GMAIL_CLIENT_SECRET','GMAIL_TOKEN_KEY'].filter(key=>!env[key]);
+  if(missing.length)return htmlResponse('Sites 실행 환경에서 읽지 못하는 설정: '+missing.join(', '),503);
   const state=randomHex(),expiresAt=Date.now()+10*60*1000;
   await env.BUCKET.put(`private/gmail-oauth-state/${state}`,JSON.stringify({userId:actor.user_id,email:actor.email,expiresAt}),{httpMetadata:{contentType:'application/json'}});
   const redirectUri=`${url.origin}/api/google/callback`,auth=new URL('https://accounts.google.com/o/oauth2/v2/auth');
@@ -83,7 +85,8 @@ export async function gmailCallback(env,request,url){
   return htmlResponse('Gmail 발신 계정 연결이 완료되었습니다.');
 }
 async function accessToken(env){
-  if(!env.GMAIL_CLIENT_ID||!env.GMAIL_CLIENT_SECRET)throw Object.assign(new Error('Gmail 클라이언트 설정이 없습니다.'),{status:503});
+  const missing=['GMAIL_CLIENT_ID','GMAIL_CLIENT_SECRET'].filter(key=>!env[key]);
+  if(missing.length)throw Object.assign(new Error('Sites 실행 환경에서 읽지 못하는 설정: '+missing.join(', ')),{status:503});
   const saved=await loadToken(env);
   if(!saved?.refresh_token)throw Object.assign(new Error('Gmail 발신 계정을 먼저 연결하세요.'),{status:503});
   if(saved.access_token&&saved.expires_at>Date.now()+60000)return saved.access_token;

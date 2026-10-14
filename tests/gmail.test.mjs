@@ -57,11 +57,13 @@ test('manual email action permits authenticated viewers and owners, and rejects 
     assert.equal(response.status,409);assert.match((await response.json()).error,/발송할 뉴스/);
     const ownerResponse=await worker.fetch(request('garzette@paran.com','/api/email-news'),env);assert.equal(ownerResponse.status,409);
     const forged=await worker.fetch(new Request('https://news.test/api/email-news',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://evil.test','oai-authenticated-user-id':'garzette@paran.com','oai-authenticated-user-email':'garzette@paran.com'},body:'{}'}),env);assert.equal(forged.status,403);
-    const status=await worker.fetch(new Request('https://news.test/api/gmail-status',{headers:{'oai-authenticated-user-id':'garzette@paran.com','oai-authenticated-user-email':'garzette@paran.com'}}),env);assert.deepEqual(await status.json(),{configured:false,connected:false,recipient:'garzette.kim@samsung.com',lastSentAt:null});
+    const status=await worker.fetch(new Request('https://news.test/api/gmail-status',{headers:{'oai-authenticated-user-id':'garzette@paran.com','oai-authenticated-user-email':'garzette@paran.com'}}),env);assert.deepEqual(await status.json(),{configured:false,connected:false,missing:['GMAIL_CLIENT_ID','GMAIL_CLIENT_SECRET','GMAIL_TOKEN_KEY'],recipient:'garzette.kim@samsung.com',lastSentAt:null});
   }finally{DB.close();}
 });
 
 test('saved client settings do not imply an authorized Gmail sender',async()=>{
   const status=await gmailStatus({BUCKET:bucket(),GMAIL_CLIENT_ID:'id',GMAIL_CLIENT_SECRET:'secret',GMAIL_TOKEN_KEY:key});
   assert.equal(status.configured,true);assert.equal(status.connected,false);
+  assert.deepEqual(status.missing,[]);
+  assert.deepEqual((await gmailStatus({BUCKET:bucket(),GMAIL_CLIENT_ID:'id',GMAIL_TOKEN_KEY:key})).missing,['GMAIL_CLIENT_SECRET']);
 });
