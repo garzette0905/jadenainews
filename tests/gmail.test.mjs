@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../worker/index.js';
-import {connectGmail,gmailCallback,sendViewerEmail,emailMarkup} from '../worker/gmail.mjs';
+import {connectGmail,gmailCallback,sendViewerEmail,emailMarkup,gmailStatus} from '../worker/gmail.mjs';
 import {localDB} from '../scripts/local-db.mjs';
 
 function bucket(){
@@ -33,8 +33,10 @@ test('owner OAuth callback stores an encrypted refresh token and sends only the 
     const callback=await gmailCallback(env,new Request('https://news.example/api/google/callback'),new URL(`https://news.example/api/google/callback?state=${state}&code=code`));
     assert.equal(callback.status,200);assert.match(await callback.text(),/연결이 완료되었습니다/);
     const stored=JSON.parse(BUCKET.values.get('private/gmail-refresh-token.json'));assert.ok(stored.ciphertext);assert.doesNotMatch(JSON.stringify(stored),/refresh-token/);
+    assert.equal((await gmailStatus(env)).connected,true);
     const result=await sendViewerEmail(env,{articles:[],ranked:[article],collectedAt:new Date().toISOString()});
     assert.equal(result.ok,true);assert.equal(result.count,1);assert.equal(result.messageId,'gmail-message');
+    assert.equal(result.recipient,'garzette.kim@samsung.com');assert.ok((await gmailStatus(env)).lastSentAt);
     assert.equal(sentRequest.url,'https://gmail.googleapis.com/gmail/v1/users/me/messages/send');
     assert.equal(sentRequest.options.headers.Authorization,'Bearer access-token');
     const raw=JSON.parse(sentRequest.options.body).raw.replace(/-/g,'+').replace(/_/g,'/');
@@ -44,15 +46,22 @@ test('owner OAuth callback stores an encrypted refresh token and sends only the 
   }finally{globalThis.fetch=originalFetch;}
 });
 
-test('viewer email action accepts viewers but refuses owners before contacting Gmail',async()=>{
+test('manual email action permits authenticated viewers and owners, and rejects cross-origin requests',async()=>{
   const DB=localDB(),objects=new Map(),BUCKET={async get(k){const v=objects.get(k);return v?{json:async()=>JSON.parse(v)}:null;},async put(k,v){objects.set(k,v);return {};}};
   const env={DB,BUCKET};
   const request=(email,path='/api/viewer-email')=>new Request('https://news.test'+path,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://news.test','oai-authenticated-user-id':email,'oai-authenticated-user-email':email},body:'{}'});
   try{
     await worker.fetch(new Request('https://news.test/api/me',{headers:{'oai-authenticated-user-id':'garzette@paran.com','oai-authenticated-user-email':'garzette@paran.com'}}),env);
     await worker.fetch(new Request('https://news.test/api/users',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://news.test','oai-authenticated-user-id':'garzette@paran.com','oai-authenticated-user-email':'garzette@paran.com'},body:JSON.stringify({action:'add',email:'reader@example.com'})}),env);
-    const response=await worker.fetch(request('reader@example.com'),env);
-    assert.equal(response.status,503);assert.match((await response.json()).error,/클라이언트 설정/);
-    const ownerResponse=await worker.fetch(request('garzette@paran.com'),env);assert.equal(ownerResponse.status,403);
+    const response=await worker.fetch(request('reader@example.com','/api/email-news'),env);
+    assert.equal(response.status,409);assert.match((await response.json()).error,/발송할 뉴스/);
+    const ownerResponse=await worker.fetch(request('garzette@paran.com','/api/email-news'),env);assert.equal(ownerResponse.status,409);
+    const forged=await worker.fetch(new Request('https://news.test/api/email-news',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://evil.test','oai-authenticated-user-id':'garzette@paran.com','oai-authenticated-user-email':'garzette@paran.com'},body:'{}'}),env);assert.equal(forged.status,403);
+    const status=await worker.fetch(new Request('https://news.test/api/gmail-status',{headers:{'oai-authenticated-user-id':'garzette@paran.com','oai-authenticated-user-email':'garzette@paran.com'}}),env);assert.deepEqual(await status.json(),{configured:false,connected:false,recipient:'garzette.kim@samsung.com',lastSentAt:null});
   }finally{DB.close();}
+});
+
+test('saved client settings do not imply an authorized Gmail sender',async()=>{
+  const status=await gmailStatus({BUCKET:bucket(),GMAIL_CLIENT_ID:'id',GMAIL_CLIENT_SECRET:'secret',GMAIL_TOKEN_KEY:key});
+  assert.equal(status.configured,true);assert.equal(status.connected,false);
 });

@@ -13,7 +13,7 @@ const worker=(await read('worker/index.js')).replace(/import \{[^}]+\} from '\.\
  .replace("import {handleAgent,agentStatus,enqueueCollection,collectionStatus} from './broker.mjs';",broker)
  .replace("import {member,manageUsers} from './users.mjs';",users)
  .replace("import {sessionMember,login,logout} from './auth.mjs';",auth)
- .replace("import {connectGmail,gmailCallback,sendViewerEmail} from './gmail.mjs';",gmail)
+ .replace("import {connectGmail,gmailCallback,sendViewerEmail,gmailStatus} from './gmail.mjs';",gmail)
  .replace('/* ASSETS */ {}',JSON.stringify(assets));
 await mkdir(new URL('dist/server/',root),{recursive:true});await mkdir(new URL('dist/.openai/',root),{recursive:true});
 await writeFile(new URL('dist/server/index.js',root),worker);await copyFile(new URL('.openai/hosting.json',root),new URL('dist/.openai/hosting.json',root));

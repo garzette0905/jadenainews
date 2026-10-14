@@ -4,6 +4,13 @@ const TOKEN_KEY='private/gmail-refresh-token.json';
 const SCOPE='https://www.googleapis.com/auth/gmail.send';
 const SENDER='garzette@gmail.com';
 const RECIPIENT='garzette.kim@samsung.com';
+export async function gmailStatus(env){
+  const configured=!!(env.GMAIL_CLIENT_ID&&env.GMAIL_CLIENT_SECRET&&env.GMAIL_TOKEN_KEY);
+  let connected=false;
+  if(configured){try{connected=!!(await loadToken(env))?.refresh_token;}catch{}}
+  const last=await env.BUCKET.get('private/gmail-last-send.json');
+  return {configured,connected,recipient:RECIPIENT,lastSentAt:last?(await last.json()).sentAt:null};
+}
 const html=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const utf8=s=>new TextEncoder().encode(s);
 const b64url=bytes=>{
@@ -103,9 +110,18 @@ function mimeMessage({to,from,subject,html:bodyHtml,plain}){
   return [`To: ${to}`,`From: ${from}`,`Subject: ${encodedSubject}`,'MIME-Version: 1.0',`Content-Type: multipart/alternative; boundary="${boundary}"`,'',`--${boundary}`,'Content-Type: text/plain; charset=UTF-8','Content-Transfer-Encoding: base64','',wrap(b64(utf8(plain))),`--${boundary}`,'Content-Type: text/html; charset=UTF-8','Content-Transfer-Encoding: base64','',wrap(b64(utf8(bodyHtml))),`--${boundary}--`,''].join('\r\n');
 }
 export async function sendViewerEmail(env,state){
+  if(!savedRanking(state).length)throw Object.assign(new Error('발송할 뉴스가 없습니다. 먼저 뉴스를 수집해 주세요.'),{status:409});
   const token=await accessToken(env),message=emailMarkup(state),raw=b64url(utf8(mimeMessage({to:RECIPIENT,from:SENDER,...message})));
   const response=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({raw})});
-  if(!response.ok)throw Object.assign(new Error('Gmail이 메일 발송을 거부했습니다.'),{status:502});
+  if(!response.ok){
+    const failure=await response.json().catch(()=>({}));
+    const reason=failure.error?.errors?.[0]?.reason;
+    const message=response.status===401?'Gmail 연결이 만료되었습니다. 소유자가 다시 연결해 주세요.':reason==='accessNotConfigured'?'Google Cloud에서 Gmail API를 사용 설정해 주세요.':response.status===403?'Gmail 발송 권한이 없거나 발송 한도에 도달했습니다. Google 설정을 확인해 주세요.':'Gmail이 메일 발송을 거부했습니다. 잠시 후 다시 시도해 주세요.';
+    throw Object.assign(new Error(message),{status:502});
+  }
   const result=await response.json();
-  return {ok:true,count:message.count,messageId:result.id};
+  if(!result.id)throw Object.assign(new Error('Gmail 발송 확인을 받지 못했습니다.'),{status:502});
+  const sentAt=new Date().toISOString();
+  await env.BUCKET.put('private/gmail-last-send.json',JSON.stringify({sentAt,messageId:result.id}),{httpMetadata:{contentType:'application/json'}});
+  return {ok:true,count:message.count,messageId:result.id,recipient:RECIPIENT,sentAt};
 }

@@ -2,7 +2,7 @@ import {canonical,savedRanking,recommendationSections,collectionSnapshot,validat
 import {handleAgent,agentStatus,enqueueCollection,collectionStatus} from './broker.mjs';
 import {member,manageUsers} from './users.mjs';
 import {sessionMember,login,logout} from './auth.mjs';
-import {connectGmail,gmailCallback,sendViewerEmail} from './gmail.mjs';
+import {connectGmail,gmailCallback,sendViewerEmail,gmailStatus} from './gmail.mjs';
 const ASSETS = /* ASSETS */ {};
 const json=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 const empty=()=>({revision:0,articles:[],feedback:[],warnings:[],profile:'',collectedAt:null});
@@ -32,7 +32,7 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
     if(request.method==='GET'&&path==='/api/google/connect')return connectGmail(env,actor,url);
     let key=await keyFor(actor?.user_id||user||actor.email);
     if(actor?.role==='viewer'){
-      if(request.method!=='GET'&&path!=='/api/viewer-email')return json({error:'조회 전용 계정입니다. 기사 수집과 평가는 관리자만 가능합니다.'},403);
+      if(request.method!=='GET'&&!['/api/viewer-email','/api/email-news'].includes(path))return json({error:'조회 전용 계정입니다. 기사 수집과 평가는 관리자만 가능합니다.'},403);
       if(path.startsWith('/api/jobs/'))return json({error:'관리자만 수집 작업을 조회할 수 있습니다.'},403);
     }
     if(actor&&actor.role!=='owner'){
@@ -40,6 +40,7 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
       key=owner?.user_id?await keyFor(owner.user_id):'news/uninitialized-owner.json';
     }
     if(request.method==='GET'&&path==='/api/me')return json({email:actor?.email||null,name:actor?.name||actor?.email||'',loginId:actor?.login_id||null,role:actor?.role||'viewer'});
+    if(request.method==='GET'&&path==='/api/gmail-status')return json(await gmailStatus(env));
     if(request.method==='GET'&&path==='/api/users')return json(await manageUsers(env,actor));
     if(request.method==='GET'&&path==='/api/runtime')return json(await agentStatus(env));
     if(request.method==='GET'&&path.startsWith('/api/jobs/'))return json(await collectionStatus(env,key,path.slice(10)));
@@ -48,8 +49,7 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
     if(request.headers.get('origin')!==url.origin)return json({error:'같은 사이트에서 요청해야 합니다.'},403);
     if(!request.headers.get('content-type')?.startsWith('application/json'))return json({error:'JSON 요청이 필요합니다.'},415);
     const data=await body(request),now=new Date().toISOString();
-    if(path==='/api/viewer-email'){
-      if(actor?.role!=='viewer')return json({error:'조회 전용 사용자만 알림을 보낼 수 있습니다.'},403);
+    if(['/api/viewer-email','/api/email-news'].includes(path)){
       const {state}=await read(env.BUCKET,key);
       return json(await sendViewerEmail(env,state));
     }
