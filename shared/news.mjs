@@ -39,28 +39,30 @@ export function canonical(raw) {
   u.hash=''; for(const k of [...u.searchParams.keys()]) if(k.startsWith('utm_')||['fbclid','gclid'].includes(k)) u.searchParams.delete(k);
   return u.href;
 }
-export function scoreArticle(a,now=Date.now()) {
+export function scoreArticle(a,now=Date.now(),vote=0) {
   const hours=Math.max(0,(now-Date.parse(a.publishedAt))/3600000);
   const freshness=30*Math.pow(0.5,hours/(HALF_LIFE[a.kind]||12));
   // Normalize the persisted AI components so old snapshots also use the new 100-point scale.
   const base=a.scores.importance*25/30+a.scores.preference*20/30+a.scores.category+a.scores.evidence-a.scores.dislike;
   const agePenalty=Math.min(20,hours*({news:0.35,official:0.2,report:0.05}[a.kind]||0.35));
-  return {...a,freshness:Math.round(freshness*10)/10,agePenalty:Math.round(agePenalty*10)/10,score:Math.round(Math.min(100,Math.max(0,base+freshness-agePenalty))*10)/10};
+  const feedbackScore=vote*10;
+  return {...a,feedbackScore,freshness:Math.round(freshness*10)/10,agePenalty:Math.round(agePenalty*10)/10,score:Math.round(Math.min(100,Math.max(0,base+freshness-agePenalty+feedbackScore))*10)/10};
 }
 export function rankArticles(articles,feedback=[],now=Date.now()) {
   const votes=new Map(feedback.map(f=>[canonical(f.url),f.vote]));
-  return articles.filter(a=>votes.get(canonical(a.url))!==-1).map(a=>({...scoreArticle(a,now),vote:votes.get(canonical(a.url))||0}))
+  return articles.filter(a=>votes.get(canonical(a.url))!==-1).map(a=>({...scoreArticle(a,now,votes.get(canonical(a.url))||0),vote:votes.get(canonical(a.url))||0}))
     .sort((a,b)=>b.score-a.score||Date.parse(b.publishedAt)-Date.parse(a.publishedAt)||a.url.localeCompare(b.url)).map((a,i)=>({...a,rank:i+1}));
 }
-// Read a collection snapshot; pending feedback only changes the selected vote buttons.
+// Keep collection-time freshness, but apply the current explicit vote immediately.
 export function savedRanking(state) {
-  // Recalculate the deterministic formula from the collection snapshot so UI formula updates
-  // also apply to already-saved data, without calling AI or using pending votes.
+  // Applied dislikes define the collected pool. Current votes adjust its score without AI.
   const source=state.articles||[];
   const complete=source.length&&source.every(a=>a?.url&&a?.publishedAt&&a?.kind&&a?.scores);
   const ranked=complete?rankArticles(source,state.appliedFeedback||[],Date.parse(state.scoredAt||state.collectedAt)||Date.now()):state.ranked||[];
   const votes=new Map((state.feedback||[]).map(f=>[canonical(f.url),f.vote]));
-  return ranked.map(a=>({...a,titleKo:editorialHeadline(a),displaySummary:editorialSummary(a),vote:votes.get(canonical(a.url))||0}));
+  const at=Date.parse(state.scoredAt||state.collectedAt)||Date.now();
+  return ranked.map(a=>{const vote=votes.get(canonical(a.url))||0;return {...(a.scores?scoreArticle(a,at,vote):{...a,feedbackScore:vote*10,score:Math.round(Math.min(100,Math.max(0,a.score-(a.feedbackScore||0)+vote*10))*10)/10}),titleKo:editorialHeadline(a),displaySummary:editorialSummary(a),vote};})
+    .sort((a,b)=>b.score-a.score||Date.parse(b.publishedAt)-Date.parse(a.publishedAt)||a.url.localeCompare(b.url)).map((a,i)=>({...a,rank:i+1}));
 }
 // Collapse duplicate coverage across the displayed 50, while preserving each group's best-ranked source.
 export function recommendationSections(ranked,limit=6) {

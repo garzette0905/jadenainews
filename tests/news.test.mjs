@@ -20,4 +20,18 @@ function storage(){const entries=new Map();return {async get(k){const v=entries.
 const req=(path,body,user='owner',origin='https://news.test')=>new Request('https://news.test'+path,{method:body?'POST':'GET',headers:{...(user?{'oai-authenticated-user-id':user}:{}),...(body?{'Content-Type':'application/json',Origin:origin}:{})},body:body?JSON.stringify(body):undefined});
 test('private data requires identity and cross-origin writes are rejected',async()=>{const env={BUCKET:storage(),LOCAL_PREVIEW:'test-no-db'};assert.equal((await worker.fetch(req('/api/state',null,null),env)).status,401);assert.equal((await worker.fetch(req('/api/feedback',{url:'https://a.com',vote:1},'owner','https://evil.test'),env)).status,403);});
 test('feedback persists per user and cancellation removes it',async()=>{const env={BUCKET:storage(),LOCAL_PREVIEW:'test-no-db'};await worker.fetch(req('/api/feedback',{url:'https://a.com',vote:1}),env);const s=await(await worker.fetch(req('/api/state'),env)).json();assert.equal(s.feedback.length,1);const other=await(await worker.fetch(req('/api/state',null,'other'),env)).json();assert.equal(other.feedback.length,0);await worker.fetch(req('/api/feedback',{url:'https://a.com',vote:0}),env);assert.equal((await(await worker.fetch(req('/api/state'),env)).json()).feedback.length,0);});
+
+test('vote response, state reload, and news API agree on immediate score changes',async()=>{
+ const env={BUCKET:storage(),LOCAL_PREVIEW:'test-no-db'},a=article({publishedAt:new Date().toISOString()}),requestedAt=new Date().toISOString();
+ const collected=await worker.fetch(req('/api/collection',{revision:0,requestedAt,sourceAccessExecuted:true,consulted:[a.url],research:{articles:[a]}}),env);
+ assert.equal(collected.status,200);
+ const base=(await collected.json()).ranked[0].score;
+ for(const vote of [1,-1,0]){
+   const changed=await (await worker.fetch(req('/api/feedback',{url:a.url,vote,title:a.title,summary:a.summary}),env)).json();
+   assert.equal(changed.ranked[0].score,base+vote*10);
+   const news=await (await worker.fetch(req('/api/news'),env)).json();
+   assert.equal(news.ranked[0].score,changed.ranked[0].score);
+   assert.equal(news.recommendations.top[0].vote,vote);
+ }
+});
 test('a late collection cannot overwrite updated preferences or a newer collection',async()=>{const env={BUCKET:storage(),LOCAL_PREVIEW:'test-no-db'},a=article({publishedAt:new Date().toISOString()});const data={revision:0,requestedAt:new Date().toISOString(),model:'selected',searchExecuted:true,consulted:[a.url],research:{articles:[a]}};await worker.fetch(req('/api/feedback',{url:'https://a.com',vote:1}),env);assert.equal((await worker.fetch(req('/api/collection',data),env)).status,409);data.revision=1;const result=await worker.fetch(req('/api/collection',data),env);assert.equal(result.status,200);const saved=await result.json();assert.equal(saved.articles.length,1);assert.equal((await worker.fetch(req('/api/collection',{...data,revision:saved.revision}),env)).status,409);});
