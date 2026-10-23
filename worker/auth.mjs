@@ -1,4 +1,6 @@
 const COOKIE='__Host-news-session';
+// CHIPS isolates an embedded session by its top-level site. Direct visits stay Strict.
+const sessionCookie=(token,embedded,maxAge)=>`${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=${embedded===true?'None; Partitioned':'Strict'}; Max-Age=${maxAge}`;
 const authFail=(message,status=401)=>{throw Object.assign(new Error(message),{status});};
 export async function digest(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),b=>b.toString(16).padStart(2,'0')).join('');}
 export function validLoginId(value){return /^[a-z0-9][a-z0-9._-]{2,63}$/.test(value);}
@@ -56,10 +58,10 @@ export async function login(env,request,data){
   await env.DB.prepare('DELETE FROM app_sessions WHERE expires_at <= ?').bind(now).run();
   await env.DB.prepare('INSERT INTO app_sessions (token_hash,email,expires_at,password_version) VALUES (?,?,?,?)').bind(await digest(token),row.email,now+86400000,row.password_version).run();
   await env.DB.prepare("UPDATE users SET status = 'active', last_seen_at = ? WHERE email = ?").bind(new Date(now).toISOString(),row.email).run();
-  return `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400`;
+  return sessionCookie(token,data.embedded,86400);
 }
-export async function logout(env,request){
+export async function logout(env,request,data={}){
   const token=request.headers.get('cookie')?.split(';').map(v=>v.trim()).find(v=>v.startsWith(COOKIE+'='))?.slice(COOKIE.length+1);
   if(token)await env.DB.prepare('DELETE FROM app_sessions WHERE token_hash = ?').bind(await digest(token)).run();
-  return `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
+  return sessionCookie('',data.embedded,0);
 }

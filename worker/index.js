@@ -25,7 +25,8 @@ export default {async fetch(request,env){const url=new URL(request.url),path=url
       if(request.method!=='POST')return json({error:'POST 요청이 필요합니다.'},405);
       if(request.headers.get('origin')!==url.origin)return json({error:'같은 사이트에서 요청해야 합니다.'},403);
       if(!request.headers.get('content-type')?.startsWith('application/json'))return json({error:'JSON 요청이 필요합니다.'},415);
-      const cookie=path==='/api/login'?await login(env,request,await body(request)):await logout(env,request);
+      const data=await body(request);
+      const cookie=path==='/api/login'?await login(env,request,data):await logout(env,request,data);
       const response=json({ok:true});response.headers.set('Set-Cookie',cookie);return response;
     }
     const actor=env.APP_LOGIN==='1'?await sessionMember(env,request):await member(env,request,user);

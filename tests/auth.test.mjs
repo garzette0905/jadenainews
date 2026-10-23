@@ -7,6 +7,40 @@ const origin='https://news.test';
 const req=(path,data,cookie,extra={})=>new Request(origin+path,{method:data?'POST':'GET',headers:{Origin:origin,'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{}),...extra},body:data?JSON.stringify(data):undefined});
 async function fixture(){const DB=localDB(),env={DB,BUCKET:{get:async()=>null},APP_LOGIN:'1',OWNER_BOOTSTRAP_PASSWORD:crypto.randomUUID()};await member(env,new Request(origin,{headers:{'oai-authenticated-user-email':'garzette@paran.com'}}),'original-owner');return env;}
 async function signIn(env,id='garzette',password=env.OWNER_BOOTSTRAP_PASSWORD){return worker.fetch(req('/api/login',{loginId:id,password}),env);}
+
+test('embedded login uses a secure partitioned session and logout clears the matching cookie',async()=>{
+ const env=await fixture();try{
+  const response=await worker.fetch(req('/api/login',{loginId:'garzette',password:env.OWNER_BOOTSTRAP_PASSWORD,embedded:true}),env);
+  assert.equal(response.status,200);
+  const cookie=response.headers.get('set-cookie');
+  assert.match(cookie,/^__Host-news-session=[a-f0-9]{64}; Path=\/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=86400$/);
+  assert.equal((await worker.fetch(req('/api/me',undefined,cookie),env)).status,200);
+  assert.equal((await worker.fetch(req('/api/news',undefined,cookie),env)).status,200);
+  const directCookie=(await signIn(env)).headers.get('set-cookie');
+  assert.match(directCookie,/SameSite=Strict/);assert.ok(!directCookie.includes('Partitioned'));
+  const loggedOut=await worker.fetch(req('/api/logout',{embedded:true},cookie),env);
+  assert.equal(loggedOut.status,200);assert.match(loggedOut.headers.get('set-cookie'),/SameSite=None; Partitioned; Max-Age=0$/);
+  assert.equal((await worker.fetch(req('/api/me',undefined,cookie),env)).status,401);
+  assert.equal((await worker.fetch(req('/api/me',undefined,directCookie),env)).status,200);
+  for(const embedded of [false,'true',1,null]){
+    const r=await worker.fetch(req('/api/login',{loginId:'garzette',password:env.OWNER_BOOTSTRAP_PASSWORD,embedded}),env);
+    assert.match(r.headers.get('set-cookie'),/SameSite=Strict/);
+  }
+ }finally{env.DB.close();}
+});
+
+test('embedded sessions retain same-origin JSON write checks and password-reset revocation',async()=>{
+ const env=await fixture();try{
+  const data={loginId:'garzette',password:env.OWNER_BOOTSTRAP_PASSWORD,embedded:true};
+  assert.equal((await worker.fetch(req('/api/login',data,undefined,{Origin:'https://japis.example'}),env)).status,403);
+  const cookie=(await worker.fetch(req('/api/login',data),env)).headers.get('set-cookie');
+  assert.equal((await worker.fetch(req('/api/feedback',{url:'https://example.com/news',vote:1},cookie,{Origin:'https://evil.test'}),env)).status,403);
+  assert.equal((await worker.fetch(req('/api/feedback',{url:'https://example.com/news',vote:1},cookie,{'Content-Type':'text/plain'}),env)).status,415);
+  assert.equal((await worker.fetch(req('/api/logout',{embedded:true},cookie,{Origin:'https://evil.test'}),env)).status,403);
+  assert.equal((await worker.fetch(req('/api/users',{action:'set-password',email:'garzette@paran.com',password:crypto.randomUUID()},cookie),env)).status,200);
+  assert.equal((await worker.fetch(req('/api/me',undefined,cookie),env)).status,401);
+ }finally{env.DB.close();}
+});
 test('public app requires its own session even when platform identity exists; login and logout use secure opaque cookies',async()=>{
  const env=await fixture();try{
   for(const path of ['/api/me','/api/state','/api/news','/api/users','/api/runtime'])assert.equal((await worker.fetch(req(path,undefined,undefined,{'oai-authenticated-user-id':'original-owner','oai-authenticated-user-email':'garzette@paran.com'}),env)).status,401);

@@ -2,6 +2,8 @@ import {SOURCES,savedRanking,recommendationSections,canonical} from '/news.mjs';
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let state={articles:[],feedback:[],revision:0},filter='all',busy=false,bridge=null,readOnly=true;
 let connectionPending=null;
+const embedded=window.self!==window.top;
+$('#login-open').hidden=!embedded;
 const connectedHint='수집 버튼을 누르면 PC가 최대 10초 안에 요청을 확인합니다. 자동 수집 주기는 없으며 조사 중에는 완료 후 다시 요청할 수 있습니다.';
 const offlineHint='저장된 기사는 볼 수 있습니다. PC에서 start-news.ps1을 실행하세요. 연결은 자동으로 다시 확인합니다.';
 const say=t=>$('#status').textContent=t;
@@ -61,6 +63,6 @@ function showLogin(){readOnly=true;currentUserEmail='';currentRole='viewer';user
 async function mailStatus(){try{const info=await api('/api/gmail-status');$('#mail-status').textContent=info.connected?`Gmail 연결됨 · 수신 설정 ${info.recipientCount}명${info.lastSentAt?' · 마지막 발송 '+time(info.lastSentAt):''}`:info.configured?'Gmail 설정은 저장됐지만 발송 권한 연결이 필요합니다. 소유자가 Gmail 연결 설정을 완료해 주세요.':'Sites 실행 환경에서 읽지 못하는 설정: '+info.missing.join(', ');}catch(e){$('#mail-status').textContent='Gmail 상태 확인 실패: '+e.message;}}
 $('#email-news').onclick=async()=>{const b=$('#email-news');b.disabled=true;b.textContent='메일 발송 중…';try{const result=await api('/api/email-news',{});say(`수신 설정된 ${result.recipientCount}명에게 뉴스 메일 ${result.count}건을 발송했습니다. Gmail 접수 완료 · ${time(result.sentAt)}`);await mailStatus();}catch(e){say('메일 발송 실패: '+e.message);}finally{b.disabled=false;b.textContent='뉴스 메일 보내기';}};
 async function start(){try{const me=await api('/api/me');currentUserEmail=me.email;currentRole=me.role;readOnly=!['owner','admin'].includes(me.role);$('#welcome-title').textContent=`${me.name||me.loginId||'사용자'}님. 환영합니다. 오늘의 SDS 맞춤형 AI News 입니다.`;$('#login-screen').hidden=true;$('#news-app').hidden=false;applyRole();await load();await mailStatus();if(!readOnly)await connection();applyRole();}catch(e){showLogin();if(!e.message.includes('로그인'))$('#login-message').textContent=e.message;}}
-$('#login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;$('#login-message').textContent='로그인 확인 중…';try{await api('/api/login',{loginId:$('#login-id').value,password:$('#login-password').value});$('#login-password').value='';$('#login-message').textContent='';await start();}catch(err){$('#login-message').textContent=err.message;}finally{b.disabled=false;}};
-$('#logout').onclick=async()=>{try{await api('/api/logout',{});showLogin();$('#login-password').value='';$('#login-message').textContent='로그아웃했습니다.';}catch(e){say(e.message);}};
+$('#login-form').onsubmit=async e=>{e.preventDefault();const b=e.submitter;b.disabled=true;$('#login-message').textContent='로그인 확인 중…';try{await api('/api/login',{loginId:$('#login-id').value,password:$('#login-password').value,embedded});$('#login-password').value='';try{await api('/api/me');}catch(err){if(embedded)throw new Error('이 브라우저에서는 화면 안의 로그인을 유지하지 못했습니다. 새 탭에서 로그인해주세요.');throw err;}$('#login-message').textContent='';await start();}catch(err){$('#login-message').textContent=err.message;}finally{b.disabled=false;}};
+$('#logout').onclick=async()=>{try{await api('/api/logout',{embedded});showLogin();$('#login-password').value='';$('#login-message').textContent='로그아웃했습니다.';}catch(e){say(e.message);}};
 applyRole();start();

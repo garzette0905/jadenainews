@@ -36,6 +36,8 @@ PC 프로그램이 켜져 있어야 새 수집을 할 수 있습니다. 수집 �
 
 ## 개발
 
+JAPIS 등 다른 사이트의 프레임 안에서는 로그인 요청의 `embedded: true`에 따라 `Secure; HttpOnly; SameSite=None; Partitioned` 세션 쿠키를 발급합니다. 브라우저는 상위 사이트별로 세션을 분리하므로 직접 접속과 JAPIS 안에서 각각 로그인합니다. 직접 접속은 기존 `SameSite=Strict`를 유지하며, 로그인·로그아웃 모두 같은 쿠키 속성을 사용합니다. 모든 쓰기 요청의 동일 Origin·JSON 검증과 서버 세션·권한 검증은 그대로 적용합니다. 프레임 쿠키를 지원하지 않는 브라우저에는 새 탭 로그인 링크와 로그인 유지 실패 안내를 제공합니다.
+
 `npm run build`, `npm test`, `npm run validate`. `npm run preview`는 localhost:8788에서 메모리 저장소를 사용합니다. 미리보기는 운영 OAuth와 호스팅 저장소의 성공을 증명하지 않습니다. 가짜 기사는 배포하지 않습니다.
 
 공식 문서: https://learn.chatgpt.com/docs/app-server · https://learn.chatgpt.com/docs/auth
