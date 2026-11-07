@@ -73,6 +73,39 @@ export function scoreArticle(a,now=Date.now(),vote=0) {
   const feedbackScore=vote*5;
   return {...a,selectionTypes:selectionTypes(a),categoryScore,preferenceScore,dislikePenalty,feedbackScore,freshness:Math.round(freshness*10)/10,agePenalty:Math.round(agePenalty*10)/10,score:Math.round(Math.min(100,Math.max(0,base+freshness-agePenalty+feedbackScore))*10)/10};
 }
+// Presentation only: both the formula and the explanatory rows use the scored values.
+export function scoreExplanation(a){
+  const format=value=>Number.isFinite(value)?value.toFixed(1):'—';
+  if(!a.scores)return {formula:'이전 저장 결과에는 항목별 배점이 없습니다. 다시 수집하면 상세 근거가 갱신됩니다.',items:[],notes:a.reasons||[]};
+  const definitions=[
+    ['importance','중요도',a.scores.importance,30,1,'산업 영향과 구체적인 새 사실에 대한 평가입니다.'],
+    ['preference','취향',a.preferenceScore,15,1,'과거 좋아요와의 적합도를 현재 취향 배점으로 환산했습니다.'],
+    ['category','선정 유형',a.categoryScore,20,1,`${(a.selectionTypes||selectionTypes(a)).map(t=>TYPE_LABELS[t]).join(' · ')}: 해당 유형의 고정 가점 중 가장 높은 점수 하나만 적용합니다.`],
+    ['evidence','근거',a.scores.evidence,5,1,'원문과 확인 가능한 근거의 신뢰성에 대한 평가입니다.'],
+    ['freshness','최신성',a.freshness,30,1,'기사 발행일부터 수집 시각까지의 경과 시간과 기사 종류별 반감기를 반영합니다.'],
+    ['dislike','부정 취향',a.dislikePenalty,null,-1,'과거 싫어요와의 유사도를 현재 감점 배점으로 환산했습니다.'],
+    ['agePenalty','경과 감점',a.agePenalty,null,-1,'기사 종류별 시간당 감점과 최대 20점 한도를 적용합니다.'],
+    ['feedback','내 평가',a.feedbackScore||0,null,1,'좋아요 +5점, 싫어요 −5점, 평가 없음 0점을 즉시 반영합니다.']
+  ];
+  const aliases={importance:'importance','중요도':'importance',preference:'preference','취향':'preference',category:'category','기사 성격':'category','선정 유형':'category',evidence:'evidence','근거':'evidence',dislike:'dislike','부정 취향':'dislike'};
+  const descriptions=new Map(),notes=[];
+  // Older AI reasons start with raw scores, e.g. "preference 14:" or "취향(14/30점):".
+  const prefix=/^\s*(?:[-*•]\s*)?(importance|preference|category|evidence|dislike|중요도|취향|기사 성격|선정 유형|근거|부정 취향)(?=\s|[:：=(\d]|$)\s*(?:[:：=]\s*)?(?:\(?\s*-?\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?\s*점?\s*\)?)?\s*[:：·=\-]?\s*(.*)$/i;
+  for(const reason of a.reasons||[]){
+    const match=String(reason).match(prefix);
+    if(match){const key=aliases[match[1].toLowerCase()];if(match[2])descriptions.set(key,[...(descriptions.get(key)||[]),match[2]]);}
+    else notes.push(String(reason));
+  }
+  const items=definitions.map(([key,label,value,max,sign,fallback])=>{
+    const display=key==='feedback'?`${label} (${format(value)})`:`${label} ${format(value)}${max?'/'+max:''}`;
+    const original=(descriptions.get(key)||[]).join(' ');
+    // The old AI category score is replaced by the current fixed type award.
+    const description=key==='category'?[fallback,original].filter(Boolean).join(' '):original||fallback;
+    return {key,label,value,max,sign,display,description};
+  });
+  const formula=items.map((item,i)=>`${i?(item.sign<0?' − ':' + '):''}${item.display}`).join('')+` ≈ ${a.score}점 (0~100점, 반올림)`;
+  return {formula,items,notes};
+}
 export function rankArticles(articles,feedback=[],now=Date.now()) {
   const votes=new Map(feedback.map(f=>[canonical(f.url),f.vote]));
   return articles.filter(a=>votes.get(canonical(a.url))!==-1).map(a=>({...scoreArticle(a,now,votes.get(canonical(a.url))||0),vote:votes.get(canonical(a.url))||0}))

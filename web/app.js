@@ -1,5 +1,5 @@
 import {copyText} from '/clipboard.mjs';
-import {SOURCES,savedRanking,recommendationSections,canonical,TYPE_LABELS,selectionTypes} from '/news.mjs';
+import {SOURCES,savedRanking,recommendationSections,canonical,TYPE_LABELS,selectionTypes,scoreExplanation} from '/news.mjs';
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let state={articles:[],feedback:[],revision:0},filter='all',busy=false,bridge=null,readOnly=true;
 let connectionPending=null;
@@ -13,11 +13,10 @@ const labels={news:'뉴스',official:'공식 발표',report:'리포트',launch:'
 const time=s=>new Date(s).toLocaleString('ko-KR',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
 // Retain open articles when feedback or filters repaint the ranked list.
 const expandedArticles=new Set();
-const points=value=>Number.isFinite(value)?value.toFixed(1):'—';
 function card(a,i,row=false){
  const types=a.selectionTypes||selectionTypes(a),id='article-'+(row?'more-':'top-')+i,open=expandedArticles.has(a.url);
  const related=a.related||[];
- const formula=a.scores?`중요도 ${points(a.scores.importance)}/30 + 취향 ${points(a.preferenceScore)}/15 + 선정 유형 ${points(a.categoryScore)}/20 + 근거 ${points(a.scores.evidence)}/5 + 최신성 ${points(a.freshness)}/30 − 부정 취향 ${points(a.dislikePenalty)} − 경과 감점 ${points(a.agePenalty)} + 내 평가 (${a.feedbackScore||0}) ≈ ${a.score}점 (0~100점, 반올림)`:'이전 저장 결과에는 항목별 배점이 없습니다. 다시 수집하면 상세 근거가 갱신됩니다.';
+ const explanation=scoreExplanation(a);
  return `<article class="news-item nw-row" data-url="${esc(a.url)}" data-expanded="${open}"><div class="news-head">
  <span class="nw-rank">${String(a.rank||i+1).padStart(2,'0')}</span>
  <span class="news-publisher">${esc(a.publisher)}</span>
@@ -29,8 +28,8 @@ function card(a,i,row=false){
  <h3 class="news-detail-heading">기사 요약</h3><p class="article-summary">${esc(a.displaySummary||a.summary||'저장된 요약이 없습니다.')}</p>
  <p class="nw-source"><strong>${esc(a.publisher)}</strong><time datetime="${esc(a.publishedAt)}">게재 ${time(a.publishedAt)}</time></p>
  <div class="score-panel"><strong class="nw-score">${a.score}<small> / 100점</small></strong><p class="score-formula">내 평가 ${a.feedbackScore>0?'+':''}${a.feedbackScore||0}점 · 좋아요 +5 / 싫어요 −5</p></div>
- <h3 class="news-detail-heading">점수 산정 근거</h3><p class="score-breakdown">${esc(formula)}</p>
- <ul class="nw-why">${(a.reasons||[]).map(reason=>`<li>${esc(reason)}</li>`).join('')}</ul>
+ <h3 class="news-detail-heading">점수 산정 근거</h3><p class="score-breakdown">${esc(explanation.formula)}</p>
+ <ul class="nw-why">${explanation.items.map(item=>`<li data-score-key="${item.key}"><strong>${item.sign<0?'− ':''}${esc(item.display)}</strong>: ${esc(item.description)}</li>`).join('')}${explanation.notes.map(note=>`<li>${esc(note)}</li>`).join('')}</ul>
  ${related.length?`<details class="nw-related"><summary>${a.mergedCount?`유사 기사 ${a.mergedCount}건 통합 · `:''}관련 보도 ${related.length}개</summary><ul>${related.map(r=>`<li><a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer"><b>${esc(r.publisher)}</b> ${esc(r.title)}</a></li>`).join('')}</ul></details>`:''}
  <div class="nw-card-foot"><a class="nw-pill" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">원문가기 ↗</a><button class="nw-pill nw-copy" data-copy>원문복사</button></div></div></article>`;
 }
