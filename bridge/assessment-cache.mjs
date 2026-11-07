@@ -3,11 +3,11 @@ import {readFile,writeFile,mkdir} from 'node:fs/promises';
 const file=new URL('../.runtime/assessment-cache.json',import.meta.url);
 export function compactFeedback(feedback,now){
   return feedback.filter(f=>[-1,1].includes(f.vote)&&Date.parse(f.updatedAt)<=now&&now-Date.parse(f.updatedAt)<=60*86400000)
-    .map(f=>({url:f.url,vote:f.vote,title:f.title||'',summary:(f.summary||'').slice(0,400),updatedAt:f.updatedAt}));
+    .map(f=>({url:f.url,vote:f.vote,eventId:f.eventId,title:f.title||'',summary:(f.summary||'').slice(0,400),updatedAt:f.updatedAt}));
 }
 export function assessmentKey(row,input){
   // Daily invalidation preserves preference decay; changed originals or votes invalidate immediately.
-  return createHash('sha256').update(JSON.stringify({headlinePolicy:2,model:input.model,day:input.now.slice(0,10),feedback:compactFeedback(input.feedback||[],Date.parse(input.now)),url:row.url,title:row.title,publishedAt:row.publishedAt,summary:row.summary,content:row.content,verification:row.verification})).digest('hex');
+  return createHash('sha256').update(JSON.stringify({headlinePolicy:2,rankingPolicy:3,model:input.model,day:input.now.slice(0,10),feedback:compactFeedback(input.feedback||[],Date.parse(input.now)),url:row.url,title:row.title,publishedAt:row.publishedAt,summary:row.summary,content:row.content,verification:row.verification})).digest('hex');
 }
 export async function readAssessments(){try{return JSON.parse(await readFile(file,'utf8'));}catch{return {};}}
 export async function writeAssessments(cache,now){

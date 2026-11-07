@@ -9,6 +9,10 @@ export const FEEDS = [
  ['MIT Technology Review','https://www.technologyreview.com/topic/artificial-intelligence/feed','news'],
  ['Bloomberg','https://feeds.bloomberg.com/technology/news.rss','news'],
  ['9to5Google','https://9to5google.com/feed/','news'],
+ ['WIRED','https://www.wired.com/feed/rss','news'],
+ ['Ars Technica','https://feeds.arstechnica.com/arstechnica/technology-lab','news'],
+ ['VentureBeat','https://venturebeat.com/category/ai/feed/','news'],
+ ['CNBC','https://www.cnbc.com/id/19854910/device/rss/rss.html','news'],
  ['OpenAI','https://openai.com/news/rss.xml','official'],
  ['Google AI · Gemini','https://blog.google/technology/ai/rss/','official'],
  ['Google DeepMind','https://deepmind.google/blog/rss.xml','official'],
@@ -22,7 +26,7 @@ const tag=(s,n)=>(s.match(new RegExp(`<${n}(?:\\s[^>]*)?>([\\s\\S]*?)</${n}>`,'i
 export function parseCandidates(xml,[publisher,feed,kind],now=Date.now()){
  const items=[];for(const block of xml.match(/<(item|entry)\b[\s\S]*?<\/\1>/gi)||[]){
   try{const url=canonical(decode(tag(block,'link')).trim()||(block.match(/<link\b[^>]*href=["']([^"']+)["']/i)||[])[1]);
-   const domain=new URL(feed).hostname.replace(/^www\./,'');const host=new URL(url).hostname.replace(/^www\./,'');
+   const domain=SOURCES.find(s=>s[0]===publisher)?.[1]||new URL(feed).hostname.replace(/^www\./,'');const host=new URL(url).hostname.replace(/^www\./,'');
    if(host!==domain&&!host.endsWith('.'+domain))continue;
    const raw=clean(tag(block,'pubDate')||tag(block,'published')||tag(block,'dc:date'));
    const dated=/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/.test(raw)?raw.replace(' ','T')+'+09:00':raw;
@@ -42,4 +46,12 @@ export async function discoverCandidates({now=Date.now(),fetcher=fetch}={}){
  }catch(e){coverage.push({publisher:source[0],status:'needs-search',count:0,error:e.message});}}}));
  for(const [publisher]of SOURCES)if(!coverage.some(c=>c.publisher===publisher))coverage.push({publisher,status:'needs-search',count:0});
  return {candidates:[...articles.values()].sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt)),coverage};
+}
+
+// Missing feeds are actionable search input, including sources learned from liked URLs.
+export function sourceSearchBatches(coverage,feedback=[],model){
+ if(model==='source-ranking')return [];
+ const missing=coverage.filter(c=>c.status==='needs-search').map(c=>({...c,domain:SOURCES.find(s=>s[0]===c.publisher)?.[1]}));
+ for(const f of feedback){if(f.vote!==1)continue;try{const domain=new URL(canonical(f.url)).hostname.replace(/^www\./,'');if(SOURCES.some(s=>domain===s[1]||domain.endsWith('.'+s[1]))||missing.some(s=>s.domain===domain))continue;const source={publisher:domain,domain,status:'needs-search',count:0};missing.push(source);coverage.push(source);}catch{}}
+ const batches=[];for(let i=0;i<missing.length;i+=8)batches.push({candidates:[],coverage:missing.slice(i,i+8),targets:[],verifiedUrls:[],sourceSearch:true});return batches;
 }

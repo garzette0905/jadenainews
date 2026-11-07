@@ -28,7 +28,7 @@ test('vote response, state reload, and news API agree on immediate score changes
  const base=(await collected.json()).ranked[0].score;
  for(const vote of [1,-1,0]){
    const changed=await (await worker.fetch(req('/api/feedback',{url:a.url,vote,title:a.title,summary:a.summary}),env)).json();
-   assert.equal(changed.ranked[0].score,base+vote*10);
+   assert.equal(changed.ranked[0].score,Math.min(100,Math.max(0,base+vote*5)));
    const news=await (await worker.fetch(req('/api/news'),env)).json();
    assert.equal(news.ranked[0].score,changed.ranked[0].score);
    assert.equal(news.recommendations.top[0].vote,vote);

@@ -30,33 +30,12 @@
 
 .nw-built{font-size:18px;line-height:1.6}.user-admin label.news-email-option{display:flex;align-items:center;gap:8px;min-width:0;flex:none;font-size:14px}.user-admin .news-email-option input{width:18px;height:18px;margin:0;padding:0;flex-shrink:0}
 
-/* One article body: compact cards on mobile and expandable rows on PC. */
-.news-toggle,.news-publisher,.news-head-score{display:none}
-.news-head{order:2;margin-top:16px;display:flex;justify-content:flex-end}
-.news-body{min-width:0}.news-body .nw-original{font-size:12px;line-height:1.5}
-.news-item .article-summary{font-size:14px;line-height:1.65}
-.news-item .score-panel{display:flex;align-items:center;gap:16px;padding:10px 12px;margin-top:12px}
-.news-item .score-panel .nw-score{font-size:23px;white-space:nowrap}
-.news-item .score-formula{margin:0;font-size:11px}
-.news-item .nw-why{margin:10px 0 0;padding-left:18px;font-size:12px}
-.news-item .score-details{margin-top:10px}
-@media(min-width:801px){
- .nw-grid{display:flex;flex-direction:column;gap:10px}
- .news-item.nw-card,.news-item.nw-row{padding:0;border:1px solid #e0e4eb;border-radius:14px;background:white;margin-bottom:0;overflow:hidden}
- .nw-list{display:flex;flex-direction:column;gap:10px}
- .news-head{order:0;display:grid;grid-template-columns:minmax(0,1fr) 140px 78px 90px;align-items:center;gap:16px;margin:0;padding:16px 20px}
- .news-toggle{display:flex;align-items:center;gap:16px;background:none;border:0;padding:0;text-align:left;color:inherit;font:inherit;cursor:pointer;min-width:0;width:100%}
- .news-head-title{font-size:16px;font-weight:650;line-height:1.55;overflow-wrap:anywhere;flex:1}
- .news-toggle .nw-rank{font-size:19px;flex-shrink:0}
- .news-chevron{font-size:22px;color:#64748b;transition:transform .15s}
- .news-item[data-expanded=true] .news-chevron{transform:rotate(180deg)}
- .news-publisher{display:block;font-size:13px;color:#64748b;overflow-wrap:anywhere}
- .news-head-score{display:block;font-size:21px;color:#164cb8;font-variant-numeric:tabular-nums;text-align:right}
- .news-head-score small{font-size:12px;margin-left:3px}
- .news-head .nw-votes{display:flex;gap:6px;justify-content:flex-end}
- .news-body{display:none;padding:18px 24px 22px;border-top:1px solid #e7ebef;background:#fafbfe}
- .news-item[data-expanded=true] .news-body{display:block}
- .news-body .mobile-title,.news-body .mobile-rank{display:none}
- .news-body .article-summary{max-width:100ch!important}
- .news-toggle:focus-visible{outline:2px solid #164cb8;outline-offset:5px;border-radius:4px}
-}
+
+
+/* Compact headlines on every screen; publisher precedes the headline. */
+.nw-grid{display:block!important}.news-item.nw-row{padding:0;margin:0;border:0;border-bottom:1px solid #e7ebef;border-radius:0;background:white}
+.news-head{display:grid;grid-template-columns:32px 132px minmax(0,1fr) 65px 88px;align-items:center;gap:14px;padding:17px 12px;min-width:0}
+.news-head .nw-rank{font-size:17px;color:#94a3b8}.news-publisher{font-size:12px;color:#64748b;overflow-wrap:anywhere}.news-headline{min-width:0;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}.news-head-title{font-size:16px;font-weight:650;line-height:1.65;overflow-wrap:anywhere;color:#141414;text-decoration:none}.news-head-title:hover{text-decoration:underline}.news-head-title:focus-visible{outline:2px solid #164cb8;outline-offset:3px}.news-types{display:inline-flex;gap:4px;flex-wrap:wrap}.news-types .nw-badge{font-size:11px;padding:3px 7px;min-height:0;height:auto;line-height:1.4;background:#edf3ff;color:#334f7c}.news-head-score{font-size:19px;color:#164cb8;font-variant-numeric:tabular-nums;text-align:right}.news-head-score small{font-size:11px;margin-left:2px}.news-head .nw-votes{display:flex;gap:4px;justify-content:flex-end}.news-head .nw-vote{width:36px;height:36px}
+@media(max-width:800px){.news-head{grid-template-columns:24px minmax(0,1fr) 58px;gap:8px;padding:16px 4px}.news-publisher{grid-column:2;grid-row:1}.news-head .nw-rank{grid-column:1;grid-row:1}.news-headline{grid-column:2 / 4;grid-row:2}.news-head-score{grid-column:3;grid-row:1;font-size:17px}.news-head .nw-votes{grid-column:2 / 4;grid-row:3;justify-content:flex-end}.news-head-title{font-size:15px}}
+
+.nw-more{margin-top:24px}.nw-more-head{justify-content:flex-end}

@@ -9,8 +9,8 @@ test('votes immediately change scores and cancellation restores them; next colle
   const collected=collectionSnapshot({articles:[]},{articles:[article],warnings:[]},[],now);
   const changed={...collected,feedback:[{url:article.url,vote:-1,updatedAt:now}]};
   assert.equal(savedRanking(changed).length,1);assert.equal(savedRanking(changed)[0].vote,-1);
-  assert.equal(savedRanking(changed)[0].score,collected.ranked[0].score-10);
-  assert.equal(savedRanking({...changed,feedback:[{url:article.url,vote:1}]})[0].score,collected.ranked[0].score+10);
+  assert.equal(savedRanking(changed)[0].score,collected.ranked[0].score-5);
+  assert.equal(savedRanking({...changed,feedback:[{url:article.url,vote:1}]})[0].score,collected.ranked[0].score+5);
   assert.equal(savedRanking({...changed,feedback:[]})[0].score,collected.ranked[0].score);
   const next=collectionSnapshot(changed,{articles:[article],warnings:[]},changed.feedback,'2026-10-13T01:00:00Z');
   assert.deepEqual(next.ranked,[]);
@@ -27,10 +27,10 @@ test('live votes reorder articles without mutating originals or accumulating on 
   const original=structuredClone(state.articles),base=savedRanking(state).find(a=>a.url===article.url).score;
   state.feedback=[{url:article.url,vote:1,updatedAt:now}];
   assert.equal(savedRanking(state)[0].url,article.url);
-  assert.equal(savedRanking(state)[0].score,base+10);
+  assert.equal(savedRanking(state)[0].score,base+5);
   assert.deepEqual(savedRanking(JSON.parse(JSON.stringify(state))),savedRanking(state));
   state.feedback=[{url:article.url,vote:-1,updatedAt:now}];
-  assert.equal(savedRanking(state).find(a=>a.url===article.url).score,base-10);
+  assert.equal(savedRanking(state).find(a=>a.url===article.url).score,base-5);
   state.feedback=[];
   assert.equal(savedRanking(state).find(a=>a.url===article.url).score,base);
   assert.deepEqual(state.articles,original);
@@ -40,7 +40,7 @@ test('collected likes receive one direct bonus and current votes can cancel it',
   const feedback=[{url:article.url,vote:1,updatedAt:now}];
   const state={...collectionSnapshot({articles:[]},{articles:[article],warnings:[]},feedback,now),feedback};
   assert.equal(savedRanking(state)[0].score,state.ranked[0].score);
-  assert.equal(savedRanking({...state,feedback:[]})[0].score,state.ranked[0].score-10);
+  assert.equal(savedRanking({...state,feedback:[]})[0].score,state.ranked[0].score-5);
   const high={...article,scores:{importance:30,preference:30,category:10,evidence:5,dislike:0}};
   assert.equal(savedRanking({...state,articles:[high]})[0].score,100);
 });
