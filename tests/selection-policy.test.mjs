@@ -40,3 +40,15 @@ test('missing news outlets and new liked publishers reach real search batches; f
  const batches=sourceSearchBatches(coverage,votes,'test');assert.ok(batches.every(b=>b.coverage.length<=8&&b.sourceSearch));
  const sources=batches.flatMap(b=>b.coverage);assert.ok(sources.some(s=>s.domain==='reuters.com'));assert.ok(sources.some(s=>s.domain==='newpublisher.example'));assert.ok(!sources.some(s=>s.domain==='disliked.example'));assert.ok(!sources.some(s=>s.publisher==='TechCrunch'));
 });
+
+test('redistributed weights sum to 100 and old raw scores retain their proportions',()=>{
+ const max={...row,category:'launch',scores:{importance:30,preference:30,category:0,evidence:5,dislike:0}};
+ const scored=scoreArticle(max,now);
+ assert.equal(scored.importanceScore,40);assert.equal(scored.preferenceScore,25);
+ assert.equal(scored.score,100);
+ const partial=scoreArticle({...max,scores:{...max.scores,importance:15,preference:15}},now);
+ assert.equal(partial.importanceScore,20);assert.equal(partial.preferenceScore,12.5);assert.equal(partial.score,67.5);
+ assert.equal(scoreArticle(max,now,1).score,100);
+ const floor={...row,scores:{importance:0,preference:0,category:0,evidence:0,dislike:35}};
+ assert.equal(scoreArticle(floor,now+720*3600000,-1).score,0);
+});

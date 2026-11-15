@@ -17,12 +17,15 @@ test('votes immediately change scores and cancellation restores them; next colle
   assert.equal(savedRanking({...next,feedback:[]}).length,0);
 });
 test('legacy snapshots keep collection freshness while applying current votes',()=>{
-  const state={articles:[article],ranked:[{...article,freshness:40,score:90}],collectedAt:now,feedback:[{url:row.url,vote:-1}]};
-  assert.equal(savedRanking(state).length,1);assert.equal(savedRanking(state)[0].freshness,30);
+  const state={articles:[article],ranked:[{...article,freshness:40,agePenalty:20,score:90}],collectedAt:now,feedback:[{url:row.url,vote:-1}]};
+  assert.equal(savedRanking(state).length,1);assert.equal(savedRanking(state)[0].freshness,10);
+  assert.ok(!Object.hasOwn(savedRanking(state)[0],'agePenalty'));
+  assert.equal(savedRanking(state)[0].importanceScore,25*40/30);
+  assert.deepEqual(savedRanking({...state,articles:[]}),savedRanking(state));
 });
 
 test('live votes reorder articles without mutating originals or accumulating on reload',()=>{
-  const other={...article,url:'https://example.com/other',scores:{...article.scores,importance:30}};
+  const other={...article,url:'https://example.com/other',scores:{...article.scores,importance:28}};
   const state={...collectionSnapshot({articles:[]},{articles:[other,article],warnings:[]},[],now),feedback:[]};
   const original=structuredClone(state.articles),base=savedRanking(state).find(a=>a.url===article.url).score;
   state.feedback=[{url:article.url,vote:1,updatedAt:now}];

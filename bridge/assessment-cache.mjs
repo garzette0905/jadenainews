@@ -5,7 +5,7 @@ const file=new URL('../.runtime/assessment-cache.json',import.meta.url);
 export const compactFeedback=preferenceFeedback;
 export function assessmentKey(row,input){
   // Daily invalidation preserves preference decay; changed originals or votes invalidate immediately.
-  return createHash('sha256').update(JSON.stringify({headlinePolicy:2,rankingPolicy:3,model:input.model,day:input.now.slice(0,10),feedback:compactFeedback(input.feedback||[],Date.parse(input.now)).map(({checkedAt,...f})=>f),url:row.url,title:row.title,publishedAt:row.publishedAt,summary:row.summary,content:row.content,verification:row.verification})).digest('hex');
+  return createHash('sha256').update(JSON.stringify({headlinePolicy:2,rankingPolicy:4,model:input.model,day:input.now.slice(0,10),feedback:compactFeedback(input.feedback||[],Date.parse(input.now)).map(({checkedAt,...f})=>f),url:row.url,title:row.title,publishedAt:row.publishedAt,summary:row.summary,content:row.content,verification:row.verification})).digest('hex');
 }
 export async function readAssessments(){try{return JSON.parse(await readFile(file,'utf8'));}catch{return {};}}
 export async function writeAssessments(cache,now){

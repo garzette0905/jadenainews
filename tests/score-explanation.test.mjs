@@ -12,7 +12,9 @@ const article={url:'https://example.com/ai-glasses',title:'삼성·Google AI 안
 test('AI glasses example uses final scores in both the formula and all explanation rows',()=>{
  const scored=scoreArticle(article,now),copy=structuredClone(scored),view=scoreExplanation(scored);
  assert.deepEqual(scored,copy);assert.deepEqual(article.scores,{importance:21,preference:14,category:8,evidence:3,dislike:8});
- assert.equal(view.items.find(i=>i.key==='preference').display,'취향 7.0/15');
+ assert.equal(view.items.find(i=>i.key==='importance').display,'중요도 28.0/40');
+ assert.ok(!view.formula.includes('경과 감점'));
+ assert.equal(view.items.find(i=>i.key==='preference').display,'취향 11.7/25');
  assert.equal(view.items.find(i=>i.key==='category').display,'선정 유형 20.0/20');
  assert.equal(view.items.find(i=>i.key==='dislike').display,'부정 취향 3.4');
  for(const item of view.items)assert.ok(view.formula.includes(item.display));
@@ -31,7 +33,7 @@ test('English and Korean reason prefixes with ratios are stripped without losing
 test('live votes, zero penalties and incomplete legacy snapshots are displayed safely',()=>{
  for(const vote of [-1,0,1]){
   const a=scoreArticle({...article,scores:{...article.scores,dislike:0},reasons:[]},now,vote),view=scoreExplanation(a);
-  assert.ok(view.formula.includes(`내 평가 (${(vote*5).toFixed(1)})`));assert.equal(view.items.find(i=>i.key==='dislike').value,0);assert.equal(view.items.length,8);
+  assert.ok(view.formula.includes(`내 평가 (${(vote*5).toFixed(1)})`));assert.equal(view.items.find(i=>i.key==='dislike').value,0);assert.equal(view.items.length,7);
  }
  assert.deepEqual(scoreExplanation({score:57,reasons:['기존 설명']}).notes,['기존 설명']);
  assert.equal(scoreExplanation({score:57}).items.length,0);
