@@ -177,8 +177,21 @@ export function researchInstructions() {return headlineInstructions()+`
 배점: importance 0~30(산업 영향·도입 범위·구체적 새 사실만 평가; 유형 자체의 가점은 제외), preference 0~30(과거 좋아요로 학습한 회사·발표자·주제·매체 적합도만 평가; 싫어요 유사도는 dislike에서만 감점; 신제품·M&A·생산성 유형 가점을 중복 반영하지 않음), category 0~10(기존 저장 형식 호환용; 서버가 유형별 고정 점수로 대체), evidence 0~5(독립적 근거와 신뢰성만), dislike 0~35(다른 사건에 대한 부정 취향 유사도). 동일 기사·동일 사건 피드백은 취향·부정 취향에 반영하지 않습니다. 점수마다 근거를 reasons로 설명합니다. 서버는 중요도 30, 취향 15, 유형 20, 근거 5, 최신성 30으로 총 100점, 부정 취향 최대 15점 감점, 직접 좋아요 +5·싫어요 -5로 계산합니다. 유형 가점은 신기술·신제품 20, M&A 19, ROI 20, 생산성 18, 무료 혜택 12, 리포트 11, 보안·연구 10, 리더 발언 8, 정책·사업 6, 기타 4점입니다. 여러 유형은 가장 높은 점수 하나만 적용합니다. category에 정확한 선정 유형을 반환합니다. 일반 투자 유치는 deal이 아니라 business이며 인수·합병을 deal로 분류합니다. 최신성은 뉴스 12시간, 공식 발표 24시간, 리포트 72시간마다 절반이 되고, 경과 시간에 따른 추가 감점은 시간당 뉴스 0.35점·공식 0.2점·리포트 0.05점, 최대 20점입니다. 최신성은 scores에 포함하지 마세요. 중요도 5와 같은 고정 특례는 쓰지 않고 큰 사건의 가치는 importance와 근거로 평가합니다.
 응답은 다음 JSON 객체만 반환합니다. Markdown 금지. {"articles":[{"eventId":"unique-event","url":"https://실제원문","title":"원문제목","titleKo":"한국어제목","summary":"핵심 사실과 영향 범위를 담은 한국어 2~3문장","publisher":"매체","publishedAt":"ISO8601 시간대 포함","kind":"news|official|report","category":"launch|free|report|leader|deal|productivity|roi|policy|security|research|business|other","scores":{"importance":0,"preference":15,"category":0,"evidence":0,"dislike":0},"reasons":["선정근거"],"related":[{"url":"https://실제관련기사","title":"관련제목","publisher":"매체"}]}],"warnings":["접근하지 못한 출처 또는 확인 한계"],"profile":"이번에 반영한 취향 요약"}.
 이전에 제공한 기사도 현재 기준으로 원문을 재확인하고 순위를 다시 평가할 수 있습니다. 입력 now를 시간 기준으로 사용합니다.`;}
+// Storage history is independent of the small, recent sample sent to each AI turn.
+export function preferenceFeedback(feedback=[],now=Date.now()) {
+  const recent=feedback.filter(f=>[-1,1].includes(f.vote)&&Date.parse(f.updatedAt)<=now&&now-Date.parse(f.updatedAt)<=60*86400000)
+    .sort((a,b)=>Date.parse(b.updatedAt)-Date.parse(a.updatedAt)||a.url.localeCompare(b.url));
+  const selected=[];let size=2;
+  for(const f of recent){const row={url:f.url,vote:f.vote,eventId:f.eventId,title:String(f.title||'').slice(0,250),summary:String(f.summary||'').slice(0,400),publisher:String(f.publisher||new URL(f.url).hostname).slice(0,100),updatedAt:f.updatedAt,checkedAt:f.checkedAt};const bytes=JSON.stringify(row).length+(selected.length?1:0);if(selected.length>=60||size+bytes>16000)break;selected.push(row);size+=bytes;}
+  return selected;
+}
+export function mergeFeedbackDetails(feedback=[],updates=[]) {
+  const byUrl=new Map(updates.slice(0,10).map(u=>[u.url,u]));
+  return feedback.map(f=>{const u=byUrl.get(f.url);if(!u||f.vote!==1||f.updatedAt!==u.updatedAt)return f;
+    return {...f,title:String(u.title||f.title||'').slice(0,250),summary:String(u.summary||f.summary||'').slice(0,1500),publisher:String(u.publisher||f.publisher||'').slice(0,100),contentStatus:u.contentStatus==='ready'?'ready':'failed',checkedAt:Number.isFinite(Date.parse(u.checkedAt))?u.checkedAt:f.checkedAt};});
+}
 export function researchInput({feedback=[],previous=[],candidates=[],coverage=[],targets=[],verifiedUrls=[],now=new Date().toISOString()}={}) {
-  return {now,feedback:feedback.slice(-400),previous:previous.slice(0,MAX_ARTICLES).map(a=>({url:a.url,title:a.title,publishedAt:a.publishedAt})),candidates,coverage,targets,verifiedUrls,task:'verification=http-original인 후보는 PC가 실제 원문과 발행일을 확인했습니다. 제공된 원문 content를 읽고 AI 관련 기사를 모두 분류·평가해 반환하세요. 제외 이유를 warnings에 남기고, 직접 접근하지 못한 원문과 출처는 웹 검색으로 보완하세요.'};
+  return {now,feedback:preferenceFeedback(feedback,Date.parse(now)),previous:[],candidates:candidates.slice(0,20).map(a=>({...a,content:String(a.content||'').slice(0,1800),summary:String(a.summary||'').slice(0,700)})),coverage:coverage.slice(0,8),targets:targets.slice(0,20),verifiedUrls:verifiedUrls.slice(0,20),task:'verification=http-original인 후보는 PC가 실제 원문과 발행일을 확인했습니다. 제공된 원문 content를 읽고 AI 관련 기사를 모두 분류·평가해 반환하세요. 제외 이유를 warnings에 남기고, 직접 접근하지 못한 원문과 출처는 웹 검색으로 보완하세요.'};
 }
 export function validateResearch(input,consulted=[],now=Date.now()) {
   if(!input||!Array.isArray(input.articles)||input.articles.length>MAX_ARTICLES) throw new Error('기사 결과 형식이 올바르지 않습니다.');

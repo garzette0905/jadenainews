@@ -53,5 +53,7 @@ export function sourceSearchBatches(coverage,feedback=[],model){
  if(model==='source-ranking')return [];
  const missing=coverage.filter(c=>c.status==='needs-search').map(c=>({...c,domain:SOURCES.find(s=>s[0]===c.publisher)?.[1]}));
  for(const f of feedback){if(f.vote!==1)continue;try{const domain=new URL(canonical(f.url)).hostname.replace(/^www\./,'');if(SOURCES.some(s=>domain===s[1]||domain.endsWith('.'+s[1]))||missing.some(s=>s.domain===domain))continue;const source={publisher:domain,domain,status:'needs-search',count:0};missing.push(source);coverage.push(source);}catch{}}
- const batches=[];for(let i=0;i<missing.length;i+=8)batches.push({candidates:[],coverage:missing.slice(i,i+8),targets:[],verifiedUrls:[],sourceSearch:true});return batches;
+ const likedDomains=new Set(feedback.filter(f=>f.vote===1).map(f=>{try{return new URL(f.url).hostname.replace(/^www\./,'');}catch{return '';}}));
+ missing.sort((a,b)=>Number(likedDomains.has(b.domain))-Number(likedDomains.has(a.domain)));
+ const batches=[];for(let i=0;i<Math.min(24,missing.length);i+=8)batches.push({candidates:[],coverage:missing.slice(i,i+8),targets:[],verifiedUrls:[],sourceSearch:true});return batches;
 }

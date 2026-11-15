@@ -2,11 +2,11 @@ import {spawn} from 'node:child_process';
 import {EventEmitter} from 'node:events';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
-import {researchInstructions,researchInput,validateResearch,canonical,MAX_ARTICLES,basicArticle} from '../shared/news.mjs';
+import {researchInstructions,researchInput,validateResearch,canonical,MAX_ARTICLES,basicArticle,mergeFeedbackDetails} from '../shared/news.mjs';
 import {discoverCandidates,sourceSearchBatches} from './discovery.mjs';
 import {referenceTargets} from './reference-targets.mjs';
 import {runBatches} from './batches.mjs';
-import {fetchEvidence,referenceCandidate} from './evidence.mjs';
+import {fetchEvidence,referenceCandidate,readPreferenceArticles,readEvidenceCache,writeEvidenceCache} from './evidence.mjs';
 import {compactFeedback,assessmentKey,readAssessments,writeAssessments,planAssessments} from './assessment-cache.mjs';
 
 export class AppClient extends EventEmitter {
@@ -29,6 +29,9 @@ export class AppClient extends EventEmitter {
   async status(){await this.start();const {account}=await this.request('account/read',{refreshToken:false});if(!account)return {connected:false,mode:'app',email:'',models:[]};if(account.type!=='chatgpt')throw new Error('앱이 API 키 방식으로 로그인되어 있습니다. ChatGPT 계정 로그인으로 바꿔주세요.');
     const models=[];let cursor;do{const r=await this.request('model/list',{limit:50,includeHidden:false,...(cursor?{cursor}:{})});models.push(...r.data.map(m=>({slug:m.model,display_name:m.displayName,isDefault:m.isDefault})));cursor=r.nextCursor;}while(cursor);models.push({slug:'source-ranking',display_name:'원문 기반 빠른 수집 (AI 평가 대기)',isDefault:false});return {connected:true,mode:'app',email:account.email||'',planType:account.planType,models};}
   async research(input,progress=()=>{}){
+    progress('저장한 기사 내용을 확인하고 있습니다 (최대 10개, AI 호출 없음)…');
+    const feedbackUpdates=await readPreferenceArticles(input.feedback||[],{now:Date.parse(input.now)});
+    input={...input,feedback:compactFeedback(mergeFeedbackDetails(input.feedback||[],feedbackUpdates),Date.parse(input.now))};
     progress('참고 매체의 최신 기사 후보를 수집하고 있습니다…');
     const {candidates,coverage}=await discoverCandidates({now:Date.parse(input.now)});
     const limit=Math.min(MAX_ARTICLES,Math.max(1,Number(input.maxArticles)||MAX_ARTICLES));
@@ -36,7 +39,9 @@ export class AppClient extends EventEmitter {
     const targetURLs=new Set(targets.map(t=>canonical(t.url)));
     const selected=candidates.filter(a=>!targetURLs.has(a.url)).slice(0,limit);
     const targetCandidates=targets.map(t=>referenceCandidate(t,candidates.find(a=>a.url===t.url)));
-    const {evidence,warnings:evidenceWarnings}=await fetchEvidence([...targetCandidates,...selected],{now:Date.parse(input.now),progress});
+    const originalCache=await readEvidenceCache();
+    const {evidence,warnings:evidenceWarnings}=await fetchEvidence([...targetCandidates,...selected],{now:Date.parse(input.now),progress,cache:originalCache});
+    await writeEvidenceCache(originalCache,Date.parse(input.now));
     const enrich=rows=>rows.map(a=>evidence.get(a.url)||a);
     const articles=new Map(),consulted=new Set(),warnings=[...evidenceWarnings],profiles=[];let searched=false,sourceAccessed=evidence.size>0,quotaError=null;
     for(const row of [...targetCandidates,...selected]){const source=evidence.get(row.url)|| (row.reference?row:null);if(!source)continue;const a=basicArticle(source,input.feedback,Date.parse(input.now));if(a){articles.set(a.url,a);consulted.add(a.url);}}
@@ -47,6 +52,7 @@ export class AppClient extends EventEmitter {
     if(input.model==='source-ranking'&&coverage.some(c=>c.status==='needs-search'))warnings.push('원문 기반 빠른 수집은 RSS 후보만 조사합니다. RSS가 없거나 실패한 매체는 AI 모델을 선택해 웹 검색으로 보완하세요.');
     const cache=await readAssessments(),plan=planAssessments(enrich([...targetCandidates,...selected]).filter(a=>articles.has(a.url)),cache,input),aiBatches=[...plan.batches,...sourceSearchBatches(coverage,compactFeedback(input.feedback||[],Date.parse(input.now)),input.model)];
     for(const a of plan.reused)articles.set(a.url,a);
+    if(feedbackUpdates.some(f=>f.contentStatus==='failed'))warnings.push('일부 등록 기사 원문에 접근하지 못했습니다. 주소는 보존하며 24시간 뒤 수집에서 재시도합니다.');
     warnings.push(`AI 평가 ${plan.reused.length}개 재사용 · 후보 평가 ${plan.batches.length}개 묶음 · 누락 매체 웹 조사 ${aiBatches.length-plan.batches.length}개 묶음. 나머지는 원문 기반 기본 순위를 유지합니다.`);
     await runBatches(aiBatches,async(batch,i,completed)=>{
       if(quotaError){for(const c of batch.coverage){const original=coverage.find(row=>row.publisher===c.publisher);if(original)original.status='needs-search';}return;}
@@ -69,7 +75,7 @@ export class AppClient extends EventEmitter {
     await writeAssessments(cache,Date.parse(input.now));
     if(!articles.size)throw new Error('새 원문 검증에 성공한 기사가 없습니다. 이전 결과를 유지합니다.');
     const all=[...articles.values()];const reserved=all.filter(a=>a.reference);const stored=[...reserved,...all.filter(a=>!a.reference).sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt))].slice(0,limit);
-    const result={research:{articles:stored,warnings:warnings.slice(0,250),profile:[...new Set(profiles)].join('\n').slice(0,1500)||'원문과 발행일, 기사 성격, 기본 취향 유사도로 순위를 계산했습니다. 기본 평가·원문 미확인 표시는 AI 의미 평가가 완료되지 않은 기사입니다.'},coverage,consulted:[...consulted],searchExecuted:searched,sourceAccessExecuted:sourceAccessed,model:input.model,mode:'app'};
+    const result={feedbackUpdates,research:{articles:stored,warnings:warnings.slice(0,250),profile:[...new Set(profiles)].join('\n').slice(0,1500)||'원문과 발행일, 기사 성격, 기본 취향 유사도로 순위를 계산했습니다. 기본 평가·원문 미확인 표시는 AI 의미 평가가 완료되지 않은 기사입니다.'},coverage,consulted:[...consulted],searchExecuted:searched,sourceAccessExecuted:sourceAccessed,model:input.model,mode:'app'};
     await writeFile(new URL('../.runtime/collection-result.json',import.meta.url),JSON.stringify(result,null,2));return result;
   }
   async researchBatch(input,progress=()=>{}){
