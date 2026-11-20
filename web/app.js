@@ -43,14 +43,44 @@ let feedbackLimit=50;
 function paintFeedback(){const recent=[...state.feedback].sort((a,b)=>Date.parse(b.updatedAt)-Date.parse(a.updatedAt));$('#feedback-list').innerHTML=`<h3>평가 저장 현황 · ${state.feedback.length}개</h3><p class="nw-hint">목록 조회는 AI를 호출하지 않습니다. 최근 평가 일부만 다음 수집에 반영하며 기록은 삭제할 때까지 보관합니다.</p>${recent.slice(0,feedbackLimit).map(f=>`<div class="feedback-row"><span>${f.vote===1?'👍':'👎'}</span><div class="feedback-content"><a href="${esc(f.url)}" target="_blank" rel="noopener noreferrer">${esc(f.title||f.url)}</a><small>${esc(f.publisher||new URL(f.url).hostname)} · ${f.title&&f.summary?'내용 저장됨':f.contentStatus==='failed'?'원문 접근 실패 · 다음 수집에서 재시도':'주소 저장됨 · 다음 수집에서 내용 확인'}${Date.now()-Date.parse(f.updatedAt)>60*86400000?' · 취향 반영 기간 만료':''}</small>${f.summary?`<p>${esc(f.summary.slice(0,180))}</p>`:''}</div><button data-remove="${esc(f.url)}" aria-label="평가 삭제">×</button></div>`).join('')||'<p class="nw-hint">기사에 평가를 남기거나 좋아하는 기사 주소를 등록하세요.</p>'}`;$('#feedback-more').hidden=recent.length<=feedbackLimit;}
 $('#feedback-more').onclick=()=>{feedbackLimit+=50;paintFeedback();};
 async function load(){state=await api('/api/state');paint();}
-async function readConnection(){try{bridge=await api('/api/runtime');$('#connection-label').textContent=bridge.connected?`PC 앱 연결됨 · ${bridge.planType||'내 계정'}`:'PC 실행 프로그램이 오프라인입니다.';$('#connection-hint').textContent=bridge.connected?connectedHint:offlineHint;$('#dot').classList.toggle('ready',bridge.connected);$('#connect').hidden=true;$('#open-app').hidden=true;$('#bridge-link').hidden=true;$('#disconnect').hidden=true;$('#model').hidden=!bridge.models.length;if(bridge.models.length){$('#model').innerHTML=bridge.models.map(m=>`<option value="${esc(m.slug)}">${esc(m.display_name)}</option>`).join('');const saved=localStorage.getItem(modelPreferenceKey);const selected=bridge.models.find(m=>m.slug===saved)||bridge.models.find(m=>m.isDefault)||bridge.models[0];$('#model').value=selected.slug;}return bridge;}catch(e){bridge=null;$('#connection-label').textContent='PC 연결 상태를 확인하지 못했습니다.';$('#connection-hint').textContent=e.message;$('#connect').hidden=true;$('#open-app').hidden=true;$('#bridge-link').hidden=true;$('#disconnect').hidden=true;return null;}}
+function preferredModelAvailable(models){
+  return models.some(m=>m.slug===PREFERRED_MODEL.slug||m.display_name===PREFERRED_MODEL.display_name);
+}
+async function readConnection(){
+  try{
+    bridge=await api('/api/runtime');
+    $('#dot').classList.toggle('ready',bridge.connected);
+    const select=$('#model');
+    const {models}=bridge;
+    select.replaceChildren();
+    if(bridge.connected&&!preferredModelAvailable(models)){
+      const unavailable=new Option(`${PREFERRED_MODEL.display_name} (PC에서 아직 미제공)`,'');
+      unavailable.disabled=true;
+      select.add(unavailable);
+    }
+    for(const model of models)select.add(new Option(model.display_name,model.slug));
+    const saved=localStorage.getItem(modelPreferenceKey);
+    const selected=models.find(m=>m.slug===saved)||models.find(m=>m.isDefault)||models[0];
+    if(selected)select.value=selected.slug;
+    return bridge;
+  }catch(e){
+    bridge=null;
+    $('#dot').classList.remove('ready');
+    $('#model').hidden=true;
+    $('#connection-label').textContent='PC 연결 상태를 확인하지 못했습니다.';
+    $('#connection-hint').textContent=e.message;
+    return null;
+  }finally{
+    for(const id of ['connect','open-app','bridge-link','disconnect'])$('#'+id).hidden=true;
+  }
+}
 function connection(){if(!connectionPending)connectionPending=readConnection().finally(()=>{connectionPending=null;applyRole();});return connectionPending;}
 $('#model').onchange=()=>localStorage.setItem(modelPreferenceKey,$('#model').value);
 $('#check-connection').onclick=()=>connection();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!readOnly)connection();});
 setInterval(()=>{if(!document.hidden&&!readOnly)connection();},60000);
 function setBusy(v){busy=v;document.querySelectorAll('.collect,#connect,#disconnect,#model').forEach(b=>b.disabled=v);$('#progress').hidden=!v;}
-function applyRole(){['likes','collect','history','user-management','check-connection'].forEach(id=>$('#'+id).hidden=readOnly);$('#gmail-connect').hidden=currentRole!=='owner';document.querySelectorAll('.nw-votes').forEach(el=>el.hidden=readOnly);if(readOnly){$('#model').hidden=true;$('#connection-label').textContent='조회 전용 계정';$('#connection-hint').textContent='관리자가 수집한 뉴스와 추천 순위를 볼 수 있습니다. 저장된 뉴스와 최신 평가가 반영된 점수·순위가 표시됩니다.';}if(!readOnly&&bridge){$('#model').hidden=!bridge.models.length;$('#connection-label').textContent=bridge.connected?`PC 앱 연결됨 · ${bridge.planType||'내 계정'}`:'PC 실행 프로그램이 오프라인입니다.';$('#connection-hint').textContent=bridge.connected?connectedHint:offlineHint;}else if(!readOnly&&$('#connection-label').textContent==='조회 전용 계정'){$('#connection-label').textContent='PC 연결 확인 중';}}
+function applyRole(){['likes','collect','history','user-management','check-connection'].forEach(id=>$('#'+id).hidden=readOnly);$('#gmail-connect').hidden=currentRole!=='owner';document.querySelectorAll('.nw-votes').forEach(el=>el.hidden=readOnly);if(readOnly){$('#model').hidden=true;$('#connection-label').textContent='조회 전용 계정';$('#connection-hint').textContent='관리자가 수집한 뉴스와 추천 순위를 볼 수 있습니다. 저장된 뉴스와 최신 평가가 반영된 점수·순위가 표시됩니다.';}if(!readOnly&&bridge){$('#model').hidden=!bridge.connected&&!bridge.models.length;$('#connection-label').textContent=bridge.connected?`PC 앱 연결됨 · ${bridge.planType||'내 계정'}`:'PC 실행 프로그램이 오프라인입니다.';$('#connection-hint').textContent=!bridge.connected?offlineHint:preferredModelAvailable(bridge.models)?connectedHint:`${PREFERRED_MODEL.display_name}이 PC의 Codex 모델 목록에 없습니다. 수집용 PC에서 Codex를 업데이트하고 뉴스 실행 프로그램을 재시작한 뒤 연결 확인을 누르세요.`;}else if(!readOnly&&$('#connection-label').textContent==='조회 전용 계정'){$('#connection-label').textContent='PC 연결 확인 중';}}
 async function collect(){if(readOnly){try{await load();say('저장된 최신 뉴스 목록을 불러왔습니다.');}catch(e){say(e.message);}return;}if(busy)return;setBusy(true);say('');try{const s=await connection();if(!s?.connected)throw new Error('PC에서 뉴스 실행 프로그램을 켜주세요.');const model=$('#model').value||s.models[0]?.slug;if(!model)throw new Error('사용 가능한 모델이 없습니다.');$('#progress-text').textContent='수집 요청 중… PC가 최대 10초 안에 요청을 확인합니다.';const job=await api('/api/collect',{model});for(;;){await new Promise(r=>setTimeout(r,10000));const j=await api('/api/jobs/'+job.id);$('#progress-text').textContent=j.message||'PC 앱이 기사를 조사하고 있습니다…';if(j.status==='failed')throw new Error(j.error||'조사 실패');if(j.status==='completed')break;}await load();say('새 기사 조사와 순위 갱신을 완료했습니다.');}catch(e){say(e.message+' 이전 결과는 유지됩니다.');}finally{setBusy(false);}}
 $('#collect').onclick=collect;
 $('#likes').onclick=()=>{$('#dialog-title').textContent='좋아하는 기사 등록';$('#likes-form').hidden=false;$('#likes-message').textContent='';feedbackLimit=50;paintFeedback();$('#dialog').showModal();};$('#history').onclick=()=>{$('#dialog-title').textContent='평가 저장 현황';$('#likes-form').hidden=true;$('#likes-message').textContent='';feedbackLimit=50;paintFeedback();$('#dialog').showModal();};$('#close').onclick=()=>$('#dialog').close();
