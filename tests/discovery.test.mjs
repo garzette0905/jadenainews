@@ -14,3 +14,15 @@ test('failed feeds request supplementary search without suppressing other source
  const result=await discoverCandidates({now,fetcher:async url=>url.includes('aitimes.com')?new Response('<rss><item><title>AI</title><link>https://www.aitimes.com/a</link><pubDate>2026-10-12T10:00:00Z</pubDate></item></rss>'):new Response('',{status:503})});
  assert.equal(result.candidates.length,1);assert.ok(result.coverage.some(c=>c.publisher==='9to5Google'&&c.status==='needs-search'));assert.ok(result.coverage.some(c=>c.publisher==='Anthropic'&&c.status==='needs-search'));
 });
+test('new AI feeds accept original-domain articles and report discovery coverage',async()=>{
+ const sources=[
+  ['전자신문','https://rss.etnews.com/04046.xml','https://www.etnews.com/20261012000001'],
+  ['The Decoder','https://the-decoder.com/feed/','https://the-decoder.com/new-ai-model/']
+ ];
+ const result=await discoverCandidates({now,fetcher:async url=>{
+  const source=sources.find(([,feed])=>feed===url);
+  return source?new Response(`<rss><item><title>AI model</title><link>${source[2]}</link><pubDate>2026-10-12T10:00:00Z</pubDate></item></rss>`):new Response('',{status:503});
+ }});
+ assert.deepEqual(result.candidates.map(a=>a.url).sort(),sources.map(([, ,url])=>url).sort());
+ for(const [publisher]of sources)assert.deepEqual(result.coverage.find(c=>c.publisher===publisher),{publisher,status:'discovered',count:1});
+});

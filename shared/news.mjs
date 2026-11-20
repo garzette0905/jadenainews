@@ -1,8 +1,9 @@
 import {editorialHeadline,editorialSummary,headlineInstructions} from './headlines.mjs';
 export const SOURCES = [
   ['AI타임스','aitimes.com','news'],['인공지능신문','aitimes.kr','news'],['지디넷코리아','zdnet.co.kr','news'],
+  ['전자신문','etnews.com','news'],
   ['TechCrunch','techcrunch.com','news'],['The Verge','theverge.com','news'],['MIT Technology Review','technologyreview.com','news'],
-  ['WIRED','wired.com','news'],['Ars Technica','arstechnica.com','news'],['VentureBeat','venturebeat.com','news'],
+  ['WIRED','wired.com','news'],['Ars Technica','arstechnica.com','news'],['VentureBeat','venturebeat.com','news'],['The Decoder','the-decoder.com','news'],
   ['CNBC','cnbc.com','news'],['AP News','apnews.com','news'],['Financial Times','ft.com','news'],['The Wall Street Journal','wsj.com','news'],['The New York Times','nytimes.com','news'],
   ['Reuters','reuters.com','news'],['Bloomberg','bloomberg.com','news'],['The Information','theinformation.com','news'],['9to5Google','9to5google.com','news'],
   ['OpenAI','openai.com','official'],['Anthropic','anthropic.com','official'],['Google DeepMind','deepmind.google','official'],
@@ -10,6 +11,18 @@ export const SOURCES = [
   ['McKinsey','mckinsey.com','report'],['Bain','bain.com','report'],['BCG','bcg.com','report'],['Deloitte','deloitte.com','report'],
   ['Section','sectionai.com','report'],['Accenture','accenture.com','report'],['Gartner','gartner.com','report']
 ];
+export const PREFERRED_MODEL = {slug:'gpt-6.2-sol',display_name:'GPT 6.2 SOL'};
+export function collectionModels(models){
+  const preferred=models.find(m=>m.slug===PREFERRED_MODEL.slug)
+    ||models.find(m=>/^gpt[ -]6\.2[ -]sol$/i.test(m.display_name));
+  if(!preferred)return models;
+  return [
+    {...preferred,display_name:PREFERRED_MODEL.display_name,isDefault:true},
+    ...models.filter(m=>m!==preferred).map(m=>({...m,isDefault:false}))
+  ];
+}
+
+export const SCORE_WEIGHTS = {importance:40,preference:25,category:20,evidence:5,freshness:10,dislike:15,feedback:5};
 export const HALF_LIFE = {news:12, official:24, report:72};
 export const WINDOWS = {news:72,official:168,report:504};
 export const MAX_ARTICLES = 250;
@@ -64,14 +77,16 @@ export function canonical(raw) {
 }
 export function scoreArticle(a,now=Date.now(),vote=0) {
   const hours=Math.max(0,(now-Date.parse(a.publishedAt))/3600000);
-  const freshness=10*Math.pow(0.5,hours/(HALF_LIFE[a.kind]||12));
+  const freshness=SCORE_WEIGHTS.freshness*Math.pow(0.5,hours/(HALF_LIFE[a.kind]||12));
   // Normalize the persisted AI components so old snapshots also use the new 100-point scale.
   const categoryScore=typeAward(a);
-  const importanceScore=a.scores.importance*40/30,preferenceScore=a.scores.preference*25/30,dislikePenalty=a.scores.dislike*15/35;
+  const importanceScore=a.scores.importance*SCORE_WEIGHTS.importance/30;
+  const preferenceScore=a.scores.preference*SCORE_WEIGHTS.preference/30;
+  const dislikePenalty=a.scores.dislike*SCORE_WEIGHTS.dislike/35;
   const base=importanceScore+preferenceScore+categoryScore+a.scores.evidence-dislikePenalty;
   // Elapsed time affects freshness only; discard derived fields from old snapshots.
   const {agePenalty:legacyAgePenalty,...original}=a;
-  const feedbackScore=vote*5;
+  const feedbackScore=vote*SCORE_WEIGHTS.feedback;
   return {...original,selectionTypes:selectionTypes(a),importanceScore,categoryScore,preferenceScore,dislikePenalty,feedbackScore,freshness:Math.round(freshness*10)/10,score:Math.round(Math.min(100,Math.max(0,base+freshness+feedbackScore))*10)/10};
 }
 // Presentation only: both the formula and the explanatory rows use the scored values.
@@ -79,11 +94,11 @@ export function scoreExplanation(a){
   const format=value=>Number.isFinite(value)?value.toFixed(1):'—';
   if(!a.scores)return {formula:'이전 저장 결과에는 항목별 배점이 없습니다. 다시 수집하면 상세 근거가 갱신됩니다.',items:[],notes:a.reasons||[]};
   const definitions=[
-    ['importance','중요도',a.importanceScore,40,1,'산업 영향과 구체적인 새 사실에 대한 평가입니다.'],
-    ['preference','취향',a.preferenceScore,25,1,'과거 좋아요와의 적합도를 현재 취향 배점으로 환산했습니다.'],
-    ['category','선정 유형',a.categoryScore,20,1,`${(a.selectionTypes||selectionTypes(a)).map(t=>TYPE_LABELS[t]).join(' · ')}: 해당 유형의 고정 가점 중 가장 높은 점수 하나만 적용합니다.`],
-    ['evidence','근거',a.scores.evidence,5,1,'원문과 확인 가능한 근거의 신뢰성에 대한 평가입니다.'],
-    ['freshness','최신성',a.freshness,10,1,'10 × 0.5^(경과 시간/반감기)로 계산합니다. 수집 시각 기준 경과 시간을 사용하며 뉴스 12시간·공식 발표 24시간·리포트 72시간마다 절반이 됩니다. 별도 경과 감점은 없습니다.'],
+    ['importance','중요도',a.importanceScore,SCORE_WEIGHTS.importance,1,'산업 영향과 구체적인 새 사실에 대한 평가입니다.'],
+    ['preference','취향',a.preferenceScore,SCORE_WEIGHTS.preference,1,'과거 좋아요와의 적합도를 현재 취향 배점으로 환산했습니다.'],
+    ['category','선정 유형',a.categoryScore,SCORE_WEIGHTS.category,1,`${(a.selectionTypes||selectionTypes(a)).map(t=>TYPE_LABELS[t]).join(' · ')}: 해당 유형의 고정 가점 중 가장 높은 점수 하나만 적용합니다.`],
+    ['evidence','근거',a.scores.evidence,SCORE_WEIGHTS.evidence,1,'원문과 확인 가능한 근거의 신뢰성에 대한 평가입니다.'],
+    ['freshness','최신성',a.freshness,SCORE_WEIGHTS.freshness,1,`${SCORE_WEIGHTS.freshness} × 0.5^(경과 시간/반감기)로 계산합니다. 수집 시각 기준 경과 시간을 사용하며 뉴스 ${HALF_LIFE.news}시간·공식 발표 ${HALF_LIFE.official}시간·리포트 ${HALF_LIFE.report}시간마다 절반이 됩니다.`],
     ['dislike','부정 취향',a.dislikePenalty,null,-1,'과거 싫어요와의 유사도를 현재 감점 배점으로 환산했습니다.'],
     ['feedback','내 평가',a.feedbackScore||0,null,1,'좋아요 +5점, 싫어요 −5점, 평가 없음 0점을 즉시 반영합니다.']
   ];
@@ -119,7 +134,7 @@ export function savedRanking(state) {
   const ranked=complete?rankArticles(source,state.appliedFeedback||[],Date.parse(state.scoredAt||state.collectedAt)||Date.now()):state.ranked||[];
   const votes=new Map((state.feedback||[]).map(f=>[canonical(f.url),f.vote]));
   const at=Date.parse(state.scoredAt||state.collectedAt)||Date.now();
-  return ranked.map(a=>{const vote=votes.get(canonical(a.url))||0;return {...(a.scores?scoreArticle(a,at,vote):{...a,feedbackScore:vote*5,score:Math.round(Math.min(100,Math.max(0,a.score-(a.feedbackScore||0)+vote*5))*10)/10}),titleKo:editorialHeadline(a),displaySummary:editorialSummary(a),vote};})
+  return ranked.map(a=>{const vote=votes.get(canonical(a.url))||0;return {...(a.scores?scoreArticle(a,at,vote):{...a,feedbackScore:vote*SCORE_WEIGHTS.feedback,score:Math.round(Math.min(100,Math.max(0,a.score-(a.feedbackScore||0)+vote*SCORE_WEIGHTS.feedback))*10)/10}),titleKo:editorialHeadline(a),displaySummary:editorialSummary(a),vote};})
     .sort((a,b)=>b.score-a.score||Date.parse(b.publishedAt)-Date.parse(a.publishedAt)||a.url.localeCompare(b.url)).map((a,i)=>({...a,rank:i+1}));
 }
 // Collapse duplicate coverage across the displayed 50, while preserving each group's best-ranked source.

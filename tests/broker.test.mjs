@@ -21,3 +21,18 @@ test('claimed jobs send a bounded preference sample; verified saved-article cont
  assert.equal((await call(e,agent('complete',{id:job.id,lease:job.lease,result:r}))).data.status,'completed');
  const state=(await call(e,user('/api/state'))).data;assert.equal(state.feedback.length,100);assert.equal(state.appliedFeedback.length,100);const saved=state.feedback.find(x=>x.url===f.url);assert.equal(saved.title,r.feedbackUpdates[0].title);assert.equal(saved.contentStatus,'ready');
 });
+test('GPT 6.2 SOL becomes the collection default when the PC advertises it',async()=>{
+ const e=env();
+ const previous={slug:'app-model',display_name:'App Model',isDefault:true};
+ const sol={slug:'gpt-6.2-sol',display_name:'GPT-6.2 Sol',isDefault:false};
+ await call(e,agent('heartbeat',{models:[previous]}));
+ assert.deepEqual((await call(e,user('/api/runtime'))).data.models,[previous]);
+ assert.equal((await call(e,user('/api/collect',{model:sol.slug}))).status,400);
+ await call(e,agent('heartbeat',{models:[previous,sol]}));
+ assert.deepEqual((await call(e,user('/api/runtime'))).data.models,[
+  {...sol,display_name:'GPT 6.2 SOL',isDefault:true},
+  {...previous,isDefault:false}
+ ]);
+ assert.equal((await call(e,user('/api/collect',{model:sol.slug}))).status,202);
+ assert.equal((await call(e,agent('claim'))).data.job.input.model,sol.slug);
+});

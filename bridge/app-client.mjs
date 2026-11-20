@@ -2,7 +2,7 @@ import {spawn} from 'node:child_process';
 import {EventEmitter} from 'node:events';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
-import {researchInstructions,researchInput,validateResearch,canonical,MAX_ARTICLES,basicArticle,mergeFeedbackDetails} from '../shared/news.mjs';
+import {researchInstructions,researchInput,validateResearch,canonical,MAX_ARTICLES,basicArticle,mergeFeedbackDetails,collectionModels} from '../shared/news.mjs';
 import {discoverCandidates,sourceSearchBatches} from './discovery.mjs';
 import {referenceTargets} from './reference-targets.mjs';
 import {runBatches} from './batches.mjs';
@@ -27,7 +27,7 @@ export class AppClient extends EventEmitter {
   request(method,params,timeout=30000){return new Promise((resolve,reject)=>{const id=this.nextId++;const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error('앱 응답을 기다리는 시간이 초과되었습니다.'));},timeout);this.pending.set(id,{resolve,reject,timer});this.send({id,method,params});});}
   fail(error){for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(error);}this.pending.clear();this.ready=null;this.emit('disconnected',error);}
   async status(){await this.start();const {account}=await this.request('account/read',{refreshToken:false});if(!account)return {connected:false,mode:'app',email:'',models:[]};if(account.type!=='chatgpt')throw new Error('앱이 API 키 방식으로 로그인되어 있습니다. ChatGPT 계정 로그인으로 바꿔주세요.');
-    const models=[];let cursor;do{const r=await this.request('model/list',{limit:50,includeHidden:false,...(cursor?{cursor}:{})});models.push(...r.data.map(m=>({slug:m.model,display_name:m.displayName,isDefault:m.isDefault})));cursor=r.nextCursor;}while(cursor);models.push({slug:'source-ranking',display_name:'원문 기반 빠른 수집 (AI 평가 대기)',isDefault:false});return {connected:true,mode:'app',email:account.email||'',planType:account.planType,models};}
+    const models=[];let cursor;do{const r=await this.request('model/list',{limit:50,includeHidden:false,...(cursor?{cursor}:{})});models.push(...r.data.map(m=>({slug:m.model,display_name:m.displayName,isDefault:m.isDefault})));cursor=r.nextCursor;}while(cursor);models.push({slug:'source-ranking',display_name:'원문 기반 빠른 수집 (AI 평가 대기)',isDefault:false});return {connected:true,mode:'app',email:account.email||'',planType:account.planType,models:collectionModels(models)};}
   async research(input,progress=()=>{}){
     progress('저장한 기사 내용을 확인하고 있습니다 (최대 10개, AI 호출 없음)…');
     const feedbackUpdates=await readPreferenceArticles(input.feedback||[],{now:Date.parse(input.now)});
