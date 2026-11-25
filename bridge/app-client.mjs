@@ -6,7 +6,7 @@ import {agentTopicBonus,researchInstructions,researchInput,validateResearch,cano
 import {discoverCandidates,selectCandidates,sourceSearchBatches} from './discovery.mjs';
 import {referenceTargets} from './reference-targets.mjs';
 import {runBatches} from './batches.mjs';
-import {fetchEvidence,referenceCandidate,readPreferenceArticles,readEvidenceCache,writeEvidenceCache} from './evidence.mjs';
+import {fetchEvidence,referenceCandidate,readPreferenceArticles,readEvidenceCache,writeEvidenceCache,verifyPrioritySearchResults} from './evidence.mjs';
 import {compactFeedback,assessmentKey,readAssessments,writeAssessments,planAssessments} from './assessment-cache.mjs';
 
 export class AppClient extends EventEmitter {
@@ -68,7 +68,7 @@ export class AppClient extends EventEmitter {
       progress(`${completed()}/${aiBatches.length} 완료 · 조사 ${i+1} · 검증 기사 ${articles.size}개`);
       try{const result=await this.researchBatch({...input,previous:[],feedback:compactFeedback(input.feedback||[],Date.parse(input.now)),...batch,maxArticles:Math.min(20,limit)},message=>progress(`${completed()}/${aiBatches.length} 완료 · 조사 ${i+1} · 검증 ${articles.size}개 · ${message}`));
         searched ||= result.searchExecuted;sourceAccessed ||= result.sourceAccessExecuted;for(const url of result.consulted)consulted.add(url);
-        for(const a of result.research.articles){const prior=articles.get(a.url),article={...a,reference:!!prior?.reference,assessment:'ai'};articles.set(a.url,article);const row=batch.candidates.find(c=>c.url===a.url);if(row)cache[assessmentKey(row,input)]={at:Date.parse(input.now),article};}
+        for(const a of result.research.articles){const prior=articles.get(a.url),article={...a,reference:!!prior?.reference};if(prior?.assessment==='ai'&&article.assessment==='basic')continue;articles.set(a.url,article);const row=batch.candidates.find(c=>c.url===a.url);if(row&&article.assessment==='ai')cache[assessmentKey(row,input)]={at:Date.parse(input.now),article};}
         for(const candidate of batch.candidates)if(!result.research.articles.some(a=>a.url===candidate.url))warnings.push(`${candidate.publisher}: ${candidate.title} — AI 평가를 완료하지 못해 확인된 기본 순위를 유지했습니다.`);
         warnings.push(...result.research.warnings);profiles.push(result.research.profile);
         for(const c of batch.coverage){
@@ -103,7 +103,20 @@ export class AppClient extends EventEmitter {
       const final=await done;if(final.status!=='completed')throw new Error(final.error?.message||'앱의 뉴스 조사가 완료되지 않았습니다.');if(!search&&!input.verifiedUrls?.length)throw new Error('실제 웹 검색 또는 원문 확인이 수행되지 않았습니다.');
       const messages=[...items.values()].filter(i=>i.type==='agentMessage');const last=messages.filter(i=>i.phase==='final_answer').at(-1)||messages.at(-1);if(!last?.text)throw new Error('기사 결과가 없습니다.');let parsed;try{parsed=JSON.parse(last.text.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,''));}catch{throw new Error('AI 기사 결과 형식이 올바르지 않습니다.');}
       this.lastResearch={parsed,consulted:[...consulted],actions:[...items.values()].filter(i=>i.type==='webSearch').map(i=>i.action)};
-      progress('기사 근거와 배점을 확인하고 있습니다…');return {research:validateResearch(parsed,[...consulted],Date.parse(input.now)),consulted:[...consulted],searchExecuted:search,sourceAccessExecuted:!!input.verifiedUrls?.length,model:input.model,mode:'app'};
+      progress('기사 근거와 배점을 확인하고 있습니다…');
+      const now=Date.parse(input.now),prioritySearch=search&&input.coverage?.some(c=>c.needed>0);
+      let research;
+      let direct=[];
+      if(prioritySearch&&Array.isArray(parsed.articles)){
+        direct=await verifyPrioritySearchResults(parsed.articles,input.coverage,consulted,{now,feedback:input.feedback});
+        const recovered=new Set(direct.map(a=>a.url));
+        const articles=parsed.articles.filter(a=>{try{return !recovered.has(canonical(a.url));}catch{return true;}});
+        for(const article of direct)consulted.add(article.url);
+        research=articles.length||direct.length?validateResearch({...parsed,articles:[...articles,...direct]},[...consulted],now):{
+          articles:[],warnings:(Array.isArray(parsed.warnings)?parsed.warnings:[]).slice(0,250),profile:''
+        };
+      }else research=validateResearch(parsed,[...consulted],now);
+      return {research,consulted:[...consulted],searchExecuted:search,sourceAccessExecuted:!!(input.verifiedUrls?.length||direct.length),model:input.model,mode:'app'};
     }finally{clearTimeout(timer);this.off('item/completed',onItem);this.off('turn/completed',onDone);this.off('disconnected',onDisconnect);this.request('thread/archive',{threadId:thread.id}).catch(()=>{});}
   }
   close(){this.process?.kill();this.process=null;this.ready=null;}

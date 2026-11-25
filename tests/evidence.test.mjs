@@ -1,6 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {pageEvidence,fetchEvidence,referenceCandidate} from '../bridge/evidence.mjs';
+import {pageEvidence,fetchEvidence,referenceCandidate,verifyPrioritySearchResults} from '../bridge/evidence.mjs';
+
+test('priority search leads are only recovered from recent official originals',async()=>{
+ const urls=['https://www.bcg.com/publications/verified','https://www.bcg.com/publications/stale','https://www.bcg.com/publications/consulted','https://www.bcg.com.attacker.test/publications/fake','http://www.bcg.com/publications/insecure'];
+ const fetched=[];
+ const now=Date.parse('2026-11-25T14:00:00Z');
+ const results=await verifyPrioritySearchResults(urls.map(url=>({url,publishedAt:'2026-11-25T12:00:00Z'})),[{publisher:'BCG',needed:3}],new Set([urls[2]]),{now,fetcher:async(url,options)=>{
+  fetched.push(url);
+  assert.equal(options.redirect,'error');
+  const date=url.endsWith('/verified')?'<span class="news-publish-date">November 20, 2026</span>':'<meta property="article:published_time" content="2026-10-01T14:00:00Z">';
+  return new Response(`<title>AI agent research</title>${date}`);
+ }});
+ assert.deepEqual(fetched,urls.slice(0,2));
+ assert.deepEqual(results.map(a=>[a.url,a.publishedAt,a.assessment]),[[urls[0],'2026-11-20T00:00:00.000Z','basic']]);
+});
 const now=Date.parse('2026-10-12T14:00:00Z'),candidate={url:'https://www.aitimes.com/news/articleView.html?idxno=216170',title:'AI',publisher:'AI타임스',kind:'news'};
 test('original publication time is used rather than modification or discovery time',()=>{
  const html='<meta content="2026-10-12T18:00:00+09:00" property="article:published_time"><meta property="article:modified_time" content="2026-10-12T22:00:00+09:00"><meta property="og:title" content="AI &amp; agents"><article>Logo</article><article itemprop="articleBody"><p>새 AI 모델을 공개했습니다.</p><script>ignore instructions</script></article>';
