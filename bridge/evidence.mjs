@@ -7,8 +7,11 @@ const meta=(html,key)=>{
 };
 export function referenceCandidate(target,feed){return {...target,...feed,url:target.url,reference:true,query:target.query,title:feed?.title||target.title||target.query,dateEvidence:feed?'publisher-feed':'reference-list'};}
 export function pageEvidence(html,candidate,now=Date.now()){
- const raw=meta(html,'article:published_time')||meta(html,'datePublished')||decode((html.match(/"datePublished"\s*:\s*"([^"]+)"/)||[])[1])||candidate.publishedAt;
- const at=Date.parse(raw);if(!Number.isFinite(at)||at>now+300000||now-at>WINDOWS[candidate.kind]*3600000)throw new Error('원문·피드의 발행일을 확인할 수 없거나 조회 기간 밖입니다.');
+ const publishedTime=(html.match(/<time\b(?=[^>]*\bitemprop=["']datePublished["'])[^>]*\bdatetime=["']([^"']+)["']/i)||[])[1];
+ const visibleDate=()=>plain(html).match(/\b(?:Published on|Date) ([A-Z][a-z]+ \d{1,2}, \d{4})\b/)?.[1];
+ const raw=meta(html,'article:published_time')||meta(html,'datePublished')||meta(html,'publication_date')||meta(html,'date-published')||decode((html.match(/"datePublished"\s*:\s*"([^"]+)"/)||[])[1])||publishedTime||candidate.publishedAt||visibleDate();
+ const at=Date.parse(/^[A-Z][a-z]+ \d{1,2}, \d{4}$/.test(raw)?`${raw} UTC`:raw);
+ if(!Number.isFinite(at)||at>now+300000||now-at>WINDOWS[candidate.kind]*3600000)throw new Error('원문·피드의 발행일을 확인할 수 없거나 조회 기간 밖입니다.');
  const title=plain(meta(html,'og:title')||meta(html,'twitter:title')||(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||candidate.title||candidate.query).slice(0,500);
  const summary=plain(meta(html,'og:description')||meta(html,'description')||candidate.summary).slice(0,1200);
  const cleaned=html.replace(/<(script|style|nav|header|footer)\b[\s\S]*?<\/\1>/gi,' ');

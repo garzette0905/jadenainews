@@ -30,7 +30,8 @@ test('old recurring reports are separate and URL-based IDs do not create false e
 test('fewer than six distinct events yields only available representatives; pending votes cannot alter grouping',()=>{
   const rows=[article(1,'release'),article(2,'release')];const a=recommendationSections(rows),b=recommendationSections(rows.map(a=>({...a,vote:-1})));
   assert.equal(a.top.length,1);assert.equal(a.more.length,0);assert.deepEqual(a.top.map(a=>a.url),b.top.map(a=>a.url));
-  assert.deepEqual(recommendationSections([]),{top:[],more:[],articleCount:0,groupedCount:0});
+  const empty=recommendationSections([]);
+  assert.deepEqual(empty,{top:[],more:[],sourceCoverage:{consulting:{target:0,count:0},openai:{target:0,count:0},anthropic:{target:0,count:0}},articleCount:0,groupedCount:0});
 });
 test('similar reports are merged throughout the 50-story list, including below Top 6',()=>{
   const rows=Array.from({length:6},(_,i)=>article(i+1,'unique-'+i));rows.push(article(7,'another-release'),article(8,'another-release'));
@@ -46,4 +47,33 @@ test('a shared company and named product collapse a paraphrased release, not unr
   const chip=article(3,'microsoft-chip',{titleKo:'Microsoft 자체 AI 칩 Maia 300 공개'}),policy=article(4,'microsoft-policy',{titleKo:'Microsoft, UK AI 출시 전 외부 안전 평가 제안'});
   const r=recommendationSections([museA,museB,chip,policy]);
   assert.deepEqual(r.top.map(a=>a.articleRank),[1,3,4]);assert.equal(r.top[0].mergedCount,1);
+});
+test('fifty recommendations reserve five distinct verified events for each requested source group',()=>{
+  const rows=Array.from({length:65},(_,i)=>article(i+1,`event-${i+1}`));
+  const sources=[['https://www.bcg.com/publications/2026/','BCG','report'],['https://openai.com/index/','OpenAI','official'],['https://claude.com/resources/articles/','Anthropic','official']];
+  for(const [url,publisher,kind] of sources){
+    for(let i=0;i<6;i++){
+      const rank=rows.length+1;
+      const eventId=publisher==='OpenAI'&&i===0?'event-1':`priority-${rank}`;
+      rows.push(article(rank,eventId,{url:url+rank,publisher,kind}));
+    }
+  }
+  const result=recommendationSections(rows),displayed=[...result.top,...result.more];
+  assert.equal(displayed.length,50);
+  assert.deepEqual(Object.values(result.sourceCoverage),Array.from({length:3},()=>({target:5,count:5})));
+  assert.deepEqual(result.top.map(a=>a.articleRank),[1,2,3,4,5,6]);
+  assert.equal(displayed[49].rank,50);
+  assert.equal(result.groupedCount,1);
+});
+test('an official alternate can fill a quota while one event keeps one slot',()=>{
+  const general=article(1,'shared');
+  const release=article(2,'shared',{url:'https://openai.com/index/release',kind:'official'});
+  const lookalike=article(3,'lookalike',{url:'https://openai.com.example.com/index/release',publisher:'OpenAI',kind:'official'});
+  const unverified=article(4,'reference',{url:'https://anthropic.com/news/unverified',kind:'official',assessment:'reference'});
+  const disliked=article(5,'disliked',{url:'https://claude.com/resources/articles/disliked',kind:'official',vote:-1});
+  const result=recommendationSections([general,release,lookalike,unverified,disliked]);
+  assert.equal(result.sourceCoverage.openai.count,1);
+  assert.equal(result.sourceCoverage.anthropic.count,0);
+  assert.equal(result.top.find(a=>a.url===release.url).related[0].url,general.url);
+  assert.equal(result.top.length,4);
 });

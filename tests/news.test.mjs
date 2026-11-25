@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {rankArticles,scoreArticle,validateResearch,mergeResearch} from '../shared/news.mjs';
+import {agentTopicBonus,rankArticles,scoreArticle,validateResearch,mergeResearch} from '../shared/news.mjs';
 import {AppClient} from '../bridge/app-client.mjs';
 import worker from '../worker/index.js';
 const now=Date.parse('2026-10-12T09:00:00Z');
@@ -20,6 +20,15 @@ test('same-event articles remain separately discoverable; invalid scores are rej
 test('one invalid date cannot discard the valid part of a collection',()=>{const a=article(),bad=article({url:'https://example.com/bad',publishedAt:'invalid'});const result=validateResearch({articles:[bad,a]},[bad.url,a.url],now);assert.equal(result.articles.length,1);assert.equal(result.warnings.length,1);});
 test('all 80 articles receive consecutive ranks ordered by score',()=>{const articles=Array.from({length:80},(_,i)=>article({url:`https://example.com/${i}`,publishedAt:new Date(now-i*3600000).toISOString()}));const ranked=rankArticles(articles,[],now);assert.equal(ranked.length,80);assert.equal(ranked.at(-1).rank,80);assert.ok(ranked.every((a,i)=>i===0||ranked[i-1].score>=a.score));});
 test('importance and preference can outweigh freshness for a four-day old announcement',()=>{const fresh=article({url:'https://example.com/new',scores:{importance:20,preference:15,category:7,evidence:4,dislike:0}}),old=article({kind:'official',publishedAt:new Date(now-96*3600000).toISOString()});assert.equal(rankArticles([old,fresh],[],now)[0].url,old.url);});
+test('Muse and AI agents gain topic points without stacking or rewarding unrelated agents',()=>{
+ const ordinary=article({title:'Software update',scores:{importance:20,preference:10,category:10,evidence:4,dislike:0}});
+ const agent={...ordinary,title:'A coding agent improves tool use'},muse={...ordinary,title:'Meta, Muse Wonder 업데이트',summary:'New AI agent features'};
+ const base=scoreArticle(ordinary,now).score;
+ assert.equal(scoreArticle(agent,now).score,base+8);
+ assert.equal(scoreArticle(muse,now).score,base+10);
+ assert.equal(scoreArticle({...muse,scores:{importance:30,preference:30,category:10,evidence:5,dislike:0}},now).score,100);
+ assert.equal(agentTopicBonus({title:'Real estate agent wins award'}),0);
+});
 test('partial collections retain eligible older results and remove expired ones',()=>{const prior=article({url:'https://example.com/prior',publishedAt:new Date(now-24*3600000).toISOString()}),expired=article({url:'https://example.com/expired',publishedAt:new Date(now-80*3600000).toISOString()});const result=mergeResearch([prior,expired],{articles:[article()],warnings:[]},now);assert.equal(result.articles.length,2);assert.equal(result.articles.find(a=>a.url===prior.url).retained,true);});
 test('an unverified candidate or related link cannot discard verified news',()=>{const a=article({related:[{url:'https://unverified.test/related',title:'related'}]});const r=validateResearch({articles:[a,article({eventId:'unverified',url:'https://unverified.test/news'})]},[a.url],now);assert.equal(r.articles.length,1);assert.equal(r.articles[0].related.length,0);assert.equal(r.warnings.length,2);});
 test('app RPC correlates responses and never grants external tool requests',async()=>{const app=new AppClient(),sent=[];app.send=m=>sent.push(m);const pending=app.request('account/read',{});const id=sent[0].id;app.receive({id,result:{account:{type:'chatgpt'}}});assert.equal((await pending).account.type,'chatgpt');app.receive({id:200,method:'item/commandExecution/requestApproval',params:{}});assert.equal(sent.at(-1).error.code,-32601);});

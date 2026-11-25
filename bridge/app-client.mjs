@@ -2,8 +2,8 @@ import {spawn} from 'node:child_process';
 import {EventEmitter} from 'node:events';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
-import {researchInstructions,researchInput,validateResearch,canonical,MAX_ARTICLES,basicArticle,mergeFeedbackDetails,collectionModels} from '../shared/news.mjs';
-import {discoverCandidates,sourceSearchBatches} from './discovery.mjs';
+import {agentTopicBonus,researchInstructions,researchInput,validateResearch,canonical,MAX_ARTICLES,basicArticle,prioritySourceGroup,recommendationSections,rankArticles,reserveSourceCandidates,RECOMMENDATION_LIMIT,SOURCES,mergeFeedbackDetails,collectionModels} from '../shared/news.mjs';
+import {discoverCandidates,selectCandidates,sourceSearchBatches} from './discovery.mjs';
 import {referenceTargets} from './reference-targets.mjs';
 import {runBatches} from './batches.mjs';
 import {fetchEvidence,referenceCandidate,readPreferenceArticles,readEvidenceCache,writeEvidenceCache} from './evidence.mjs';
@@ -37,7 +37,7 @@ export class AppClient extends EventEmitter {
     const limit=Math.min(MAX_ARTICLES,Math.max(1,Number(input.maxArticles)||MAX_ARTICLES));
     const targets=input.maxArticles?[]:referenceTargets(Date.parse(input.now));
     const targetURLs=new Set(targets.map(t=>canonical(t.url)));
-    const selected=candidates.filter(a=>!targetURLs.has(a.url)).slice(0,limit);
+    const selected=selectCandidates(candidates.filter(a=>!targetURLs.has(a.url)),limit);
     const targetCandidates=targets.map(t=>referenceCandidate(t,candidates.find(a=>a.url===t.url)));
     const originalCache=await readEvidenceCache();
     const {evidence,warnings:evidenceWarnings}=await fetchEvidence([...targetCandidates,...selected],{now:Date.parse(input.now),progress,cache:originalCache});
@@ -46,11 +46,20 @@ export class AppClient extends EventEmitter {
     const articles=new Map(),consulted=new Set(),warnings=[...evidenceWarnings],profiles=[];let searched=false,sourceAccessed=evidence.size>0,quotaError=null;
     for(const row of [...targetCandidates,...selected]){const source=evidence.get(row.url)|| (row.reference?row:null);if(!source)continue;const a=basicArticle(source,input.feedback,Date.parse(input.now));if(a){articles.set(a.url,a);consulted.add(a.url);}}
     await mkdir(new URL('../.runtime/',import.meta.url),{recursive:true});let checkpoint=Promise.resolve();
-    if(candidates.length>limit)warnings.push(`후보 ${candidates.length}개 중 최신 ${limit}개를 원문 검토했습니다. 나머지 ${candidates.length-limit}개는 이번 조사에서 검토하지 못했습니다.`);
-    // Every eligible original remains visible even when the selected AI cannot complete an assessment.
-    // Reuse completed assessments; limit new AI work to forty newest pending candidates.
-    if(input.model==='source-ranking'&&coverage.some(c=>c.status==='needs-search'))warnings.push('원문 기반 빠른 수집은 RSS 후보만 조사합니다. RSS가 없거나 실패한 매체는 AI 모델을 선택해 웹 검색으로 보완하세요.');
-    const cache=await readAssessments(),plan=planAssessments(enrich([...targetCandidates,...selected]).filter(a=>articles.has(a.url)),cache,input),aiBatches=[...plan.batches,...sourceSearchBatches(coverage,compactFeedback(input.feedback||[],Date.parse(input.now)),input.model)];
+    if(candidates.length-targetURLs.size>selected.length)warnings.push(`후보 ${candidates.length}개 중 우선 출처·에이전트 주제·최신성을 고려해 비참고 후보 ${selected.length}개의 원문을 검토했습니다.`);
+    // Keep verified originals in the pool and prioritize coverage gaps in the existing web research batches.
+    const current=recommendationSections(rankArticles([...articles.values()],input.feedback,Date.parse(input.now))).sourceCoverage;
+    const targetCount=Math.ceil(Math.min(RECOMMENDATION_LIMIT,limit)*0.1);
+    const missing=new Set(Object.entries(current).filter(([,item])=>item.count<targetCount).map(([source])=>source));
+    const fallbackSources=SOURCES.flatMap(([publisher,domain,kind])=>{
+      const group=kind==='report'?'consulting':publisher==='Anthropic'?'anthropic':publisher==='OpenAI'?'openai':null;
+      if(!missing.has(group)&&!(publisher==='Meta AI'&&![...articles.values()].some(a=>a.publisher===publisher&&agentTopicBonus(a))))return [];
+      const status=coverage.find(c=>c.publisher===publisher);
+      return [{...status,publisher,domain,domains:publisher==='Anthropic'?[domain,'claude.com']:[domain],kind,lookbackHours:kind==='report'?504:168,needed:group?targetCount-current[group].count:1}];
+    });
+    if(input.model==='source-ranking'&&coverage.some(c=>c.status==='needs-search'))warnings.push('원문 기반 빠른 수집은 RSS와 공개 목록을 조사합니다. 확인이 어려운 출처는 AI 모델을 선택해 웹 검색으로 보완할 수 있습니다.');
+    const cache=await readAssessments(),plan=planAssessments(enrich([...targetCandidates,...selected]).filter(a=>articles.has(a.url)),cache,input);
+    const aiBatches=[...sourceSearchBatches(coverage,input.feedback,input.model,fallbackSources),...plan.batches];
     for(const a of plan.reused)articles.set(a.url,a);
     if(feedbackUpdates.some(f=>f.contentStatus==='failed'))warnings.push('일부 등록 기사 원문에 접근하지 못했습니다. 주소는 보존하며 24시간 뒤 수집에서 재시도합니다.');
     warnings.push(`AI 평가 ${plan.reused.length}개 재사용 · 후보 평가 ${plan.batches.length}개 묶음 · 누락 매체 웹 조사 ${aiBatches.length-plan.batches.length}개 묶음. 나머지는 원문 기반 기본 순위를 유지합니다.`);
@@ -64,8 +73,8 @@ export class AppClient extends EventEmitter {
         warnings.push(...result.research.warnings);profiles.push(result.research.profile);
         for(const c of batch.coverage){
           const original=coverage.find(row=>row.publisher===c.publisher);
-          const checked=result.consulted.some(raw=>{try{const host=new URL(raw).hostname;return host===c.domain||host.endsWith('.'+c.domain);}catch{return false;}});
-          if(original)original.status=result.searchExecuted&&checked?'searched':'needs-search';
+          const checked=result.consulted.some(raw=>{try{const host=new URL(raw).hostname;return (c.domains||[c.domain]).some(domain=>host===domain||host.endsWith('.'+domain));}catch{return false;}});
+          if(original)original.status=result.searchExecuted&&checked?'searched':original.count?'discovered':'needs-search';
           if(!checked)warnings.push(`${c.publisher}: 해당 매체 원문 확인 기록이 없어 웹 조사 필요 상태를 유지합니다.`);
         }
       }catch(e){if(/usage limit|rate.?limit|사용량 한도/i.test(e.message))quotaError=e.message;warnings.push(`조사 묶음 ${i+1} 실패: ${e.message}`);for(const c of batch.coverage){const original=coverage.find(row=>row.publisher===c.publisher);if(original)original.status='failed';}}
@@ -74,7 +83,7 @@ export class AppClient extends EventEmitter {
     await checkpoint;
     await writeAssessments(cache,Date.parse(input.now));
     if(!articles.size)throw new Error('새 원문 검증에 성공한 기사가 없습니다. 이전 결과를 유지합니다.');
-    const all=[...articles.values()];const reserved=all.filter(a=>a.reference);const stored=[...reserved,...all.filter(a=>!a.reference).sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt))].slice(0,limit);
+    const all=[...articles.values()];const reserved=all.filter(a=>a.reference);const stored=reserveSourceCandidates([...reserved,...all.filter(a=>!a.reference).sort((a,b)=>Date.parse(b.publishedAt)-Date.parse(a.publishedAt))],limit,15);
     const result={feedbackUpdates,research:{articles:stored,warnings:warnings.slice(0,250),profile:[...new Set(profiles)].join('\n').slice(0,1500)||'원문과 발행일, 기사 성격, 기본 취향 유사도로 순위를 계산했습니다. 기본 평가·원문 미확인 표시는 AI 의미 평가가 완료되지 않은 기사입니다.'},coverage,consulted:[...consulted],searchExecuted:searched,sourceAccessExecuted:sourceAccessed,model:input.model,mode:'app'};
     await writeFile(new URL('../.runtime/collection-result.json',import.meta.url),JSON.stringify(result,null,2));return result;
   }
@@ -84,7 +93,7 @@ export class AppClient extends EventEmitter {
     const config={web_search:'live'};const settings=await this.request('config/read',{includeLayers:false});for(const name of Object.keys(settings.config?.mcp_servers||{}))config[`mcp_servers.${name}.enabled`]=false;
     const {thread}=await this.request('thread/start',{model:input.model,cwd,ephemeral:true,sandbox:'read-only',approvalPolicy:'never',config,
       baseInstructions:'당신은 웹 검색만 수행하는 뉴스 조사 편집장입니다. 파일 읽기·수정, 명령 실행, MCP, 다른 에이전트 호출을 하지 않습니다.',
-      developerInstructions:researchInstructions()+` 이번 묶음은 최대 ${Math.min(40,Math.max(1,Number(input.maxArticles)||40))}개 기사를 조사합니다. candidates가 있으면 모든 후보를 확인하십시오. coverage에 지정된 출처가 있으면 각 출처에서 최근 기사를 조사하십시오. targets가 있으면 사용자가 제시한 각 기사 주제를 개별 검색하고 원문을 확인하십시오. 찾지 못한 주제는 warnings에 남기십시오. 참고 검색 주제는 검증된 사실이 아니므로 그대로 기사로 만들지 마십시오. 지정 매체는 우선순위이며 필요하면 다른 신뢰할 만한 언론도 조사할 수 있습니다. 신제품·신기술 발표, M&A 발표, AI 생산성 및 ROI를 중점 검색하십시오. coverage만 있는 묶음에서는 각 domain을 site: 검색으로 실제 웹 조사하고 원문과 발행일이 검증된 AI 기사만 반환하십시오. 미발견·유료벽·접근 실패는 매체명과 이유를 warnings에 남기십시오.`+' verifiedUrls의 원문은 PC가 실제 HTTP 접근과 발행일을 확인했으므로 제공한 content를 읽고 평가하십시오. 이 원문을 반복 검색·openPage 하지 마십시오. verifiedUrls에 없는 선택 원문·관련 URL은 실제 https URL로 openPage 웹 도구를 호출해서 확인하십시오. 검색 결과 ID 대신 실제 원문 URL로 여십시오. 전문 접근을 못 하면 공개 근거만 사용하고 warnings에 명시하십시오.'});
+      developerInstructions:researchInstructions()+` 이번 묶음은 최대 ${Math.min(40,Math.max(1,Number(input.maxArticles)||40))}개 기사를 조사합니다. candidates가 있으면 모든 후보를 확인하십시오. coverage에 지정된 출처가 있으면 각 출처에서 최근 기사를 조사하십시오. targets가 있으면 사용자가 제시한 각 기사 주제를 개별 검색하고 원문을 확인하십시오. 찾지 못한 주제는 warnings에 남기십시오. 참고 검색 주제는 검증된 사실이 아니므로 그대로 기사로 만들지 마십시오. 지정 매체는 우선순위이며 필요하면 다른 신뢰할 만한 언론도 조사할 수 있습니다. 신제품·신기술 발표, M&A 발표, AI 생산성 및 ROI를 중점 검색하십시오. coverage만 있는 묶음에서는 domain 또는 domains의 각 도메인을 site: 검색으로 실제 웹 조사하고 원문과 발행일이 검증된 AI 기사만 반환하십시오. needed가 있는 출처는 lookbackHours 내의 공식 원문을 우선 확인하십시오. 컨설팅사의 needed는 업계 전체의 부족분입니다. 컨설팅사는 구체적 AI 연구·도입·산업 분석을, Meta AI는 Muse 및 AI 에이전트의 기능과 모델 변화를 우선하십시오. 미발견·유료벽·접근 실패는 매체명과 이유를 warnings에 남기십시오.`+' verifiedUrls의 원문은 PC가 실제 HTTP 접근과 발행일을 확인했으므로 제공한 content를 읽고 평가하십시오. 이 원문을 반복 검색·openPage 하지 마십시오. verifiedUrls에 없는 선택 원문·관련 URL은 실제 https URL로 openPage 웹 도구를 호출해서 확인하십시오. 검색 결과 ID 대신 실제 원문 URL로 여십시오. 전문 접근을 못 하면 공개 근거만 사용하고 warnings에 명시하십시오.'});
     const items=new Map(),consulted=new Set(input.verifiedUrls||[]);let search=false;
     let settle;const done=new Promise((resolve,reject)=>{settle={resolve,reject};});
     const onItem=p=>{if(p.threadId!==thread.id)return;const item=p.item;items.set(item.id,item);if(item.type==='webSearch'){search=true;progress('앱에서 웹 검색과 원문 확인을 진행하고 있습니다…');if(item.action?.url){try{consulted.add(canonical(item.action.url));}catch{}}}};
